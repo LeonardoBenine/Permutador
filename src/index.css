@@ -1,0 +1,20 @@
+﻿* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Sora', 'Segoe UI', sans-serif;
+  color: #0c2748;
+}
+
+button,
+input {
+  font: inherit;
+}

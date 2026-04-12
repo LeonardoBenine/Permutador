@@ -1,0 +1,794 @@
+﻿.assets-page {
+  --background: #f8fafc;
+  --surface: rgba(255, 255, 255, 0.94);
+  --surface-border: rgba(30, 41, 59, 0.12);
+  --headline: #1e293b;
+  --text: #334155;
+  --muted: #64748b;
+  --primary: #f26b25;
+  --primary-strong: #d85a1a;
+  --primary-deep: #b84811;
+  --primary-soft: #ffe8db;
+  --shadow:
+    0 24px 48px rgba(30, 41, 59, 0.16),
+    0 10px 18px rgba(30, 41, 59, 0.08);
+
+  min-height: 100svh;
+  background:
+    radial-gradient(circle at 8% 13%, rgba(30, 41, 59, 0.12), transparent 34%),
+    radial-gradient(circle at 92% 88%, rgba(242, 107, 37, 0.26), transparent 36%),
+    linear-gradient(165deg, #f8fafc 0%, #fff8f4 100%);
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.assets-orb {
+  position: absolute;
+  border-radius: 999px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.assets-orb-left {
+  width: 290px;
+  height: 290px;
+  top: -80px;
+  left: -80px;
+  background: linear-gradient(140deg, rgba(30, 41, 59, 0.26), rgba(30, 41, 59, 0.06));
+}
+
+.assets-orb-right {
+  width: 340px;
+  height: 340px;
+  right: -90px;
+  bottom: -120px;
+  background: linear-gradient(140deg, rgba(242, 107, 37, 0.32), rgba(242, 107, 37, 0.1));
+}
+
+.app-shell {
+  max-width: 1300px;
+  margin: 0 auto;
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 250px minmax(0, 1fr);
+  position: relative;
+  z-index: 2;
+}
+
+.app-sidebar {
+  border: 1px solid var(--surface-border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.app-sidebar-logo {
+  width: 100%;
+  max-width: 180px;
+  height: auto;
+}
+
+.app-sidebar-nav {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.app-sidebar-nav button {
+  border: 1px solid rgba(30, 41, 59, 0.16);
+  border-radius: 11px;
+  background: #ffffff;
+  color: var(--muted);
+  text-align: left;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.app-sidebar-nav button.active {
+  border-color: rgba(242, 107, 37, 0.34);
+  color: var(--primary-deep);
+  background: var(--primary-soft);
+}
+
+.app-sidebar-logout {
+  margin-top: auto;
+  border: 1px solid rgba(30, 41, 59, 0.2);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--headline);
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.app-main {
+  min-width: 0;
+}
+
+.assets-layout {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 1.2fr 0.9fr;
+}
+
+.assets-header {
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  border: 1px solid var(--surface-border);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 16px 20px;
+}
+
+.assets-user {
+  display: grid;
+  gap: 5px;
+}
+
+.assets-user p {
+  margin: 0;
+  color: var(--headline);
+  font-size: 0.95rem;
+}
+
+.assets-user span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.assets-form-card,
+.assets-list-card {
+  border: 1px solid var(--surface-border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.assets-form-card {
+  padding: 26px;
+}
+
+.assets-form-header p {
+  margin: 0;
+  color: var(--primary-strong);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.assets-form-header h1 {
+  margin: 8px 0 0;
+  color: var(--headline);
+  font-family: 'Manrope', sans-serif;
+  line-height: 1.16;
+  font-size: clamp(1.55rem, 2vw, 1.95rem);
+}
+
+.assets-type-switcher {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 6px;
+  border-radius: 13px;
+  background: rgba(30, 41, 59, 0.06);
+}
+
+.assets-type-switcher button {
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.assets-type-switcher button.active {
+  background: #ffffff;
+  color: var(--primary-deep);
+  box-shadow: 0 8px 14px rgba(30, 41, 59, 0.1);
+}
+
+.assets-feedback {
+  margin: 12px 0 0;
+  border-radius: 12px;
+  padding: 11px 12px;
+  font-size: 0.9rem;
+  border: 1px solid transparent;
+}
+
+.assets-feedback.success {
+  background: rgba(15, 134, 83, 0.12);
+  color: #0f8653;
+  border-color: rgba(15, 134, 83, 0.22);
+}
+
+.assets-feedback.error {
+  background: rgba(185, 61, 49, 0.11);
+  color: #b93d31;
+  border-color: rgba(185, 61, 49, 0.2);
+}
+
+.assets-feedback.info {
+  background: rgba(242, 107, 37, 0.14);
+  color: var(--primary-deep);
+  border-color: rgba(242, 107, 37, 0.22);
+}
+
+.assets-form {
+  margin-top: 14px;
+  display: grid;
+  gap: 11px;
+}
+
+.assets-form label {
+  color: var(--headline);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.assets-form input,
+.assets-form textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(30, 41, 59, 0.2);
+  border-radius: 12px;
+  padding: 12px 13px;
+  font-size: 1rem;
+  color: var(--headline);
+  font-family: 'Sora', sans-serif;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.assets-form textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.assets-form input:focus,
+.assets-form textarea:focus {
+  border-color: rgba(242, 107, 37, 0.72);
+  box-shadow: 0 0 0 4px rgba(242, 107, 37, 0.18);
+}
+
+.assets-grid-two {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.assets-grid-two > div {
+  min-width: 0;
+  display: grid;
+  gap: 11px;
+}
+
+.assets-photo-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.assets-photo-field small {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.assets-photo-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}
+
+.assets-photo-item {
+  margin: 0;
+  border: 1px solid rgba(30, 41, 59, 0.14);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.assets-photo-item img {
+  width: 100%;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.assets-photo-item button {
+  border: none;
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(185, 61, 49, 0.12);
+  color: #9f3128;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assets-submit {
+  margin-top: 4px;
+  border: none;
+  border-radius: 12px;
+  padding: 13px;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.95rem;
+  background: linear-gradient(140deg, var(--primary), var(--primary-strong));
+  box-shadow: 0 12px 20px rgba(242, 107, 37, 0.3);
+  cursor: pointer;
+}
+
+.assets-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+  box-shadow: none;
+}
+
+.assets-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.assets-cancel {
+  border: 1px solid rgba(30, 41, 59, 0.2);
+  border-radius: 12px;
+  padding: 11px 14px;
+  background: #ffffff;
+  color: var(--headline);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assets-list-card {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.assets-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.assets-list-header h2 {
+  margin: 0;
+  color: var(--headline);
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.25rem;
+}
+
+.assets-list-header span {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: var(--primary-deep);
+  background: var(--primary-soft);
+}
+
+.assets-empty {
+  margin: 16px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.assets-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 11px;
+  overflow: auto;
+  max-height: 560px;
+  padding-right: 4px;
+}
+
+.asset-item {
+  border: 1px solid rgba(30, 41, 59, 0.14);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 13px;
+}
+
+.asset-item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.asset-item header strong {
+  color: var(--headline);
+  font-size: 0.97rem;
+}
+
+.asset-item header span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.asset-item ul {
+  margin: 9px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.asset-edit {
+  margin-top: 10px;
+  border: 1px solid rgba(30, 41, 59, 0.18);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #ffffff;
+  color: var(--headline);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.asset-photo-strip {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.asset-photo-strip img {
+  width: 58px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(30, 41, 59, 0.16);
+}
+
+.asset-photo-strip span {
+  min-width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--primary-deep);
+  background: var(--primary-soft);
+}
+
+.tinder-layout {
+  display: grid;
+}
+
+.tinder-card-shell {
+  border: 1px solid var(--surface-border);
+  border-radius: 24px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 24px;
+  display: grid;
+  gap: 14px;
+}
+
+.tinder-header p {
+  margin: 0;
+  color: var(--primary-strong);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.tinder-header h2 {
+  margin: 8px 0 0;
+  color: var(--headline);
+  font-size: clamp(1.35rem, 2vw, 1.7rem);
+  line-height: 1.18;
+}
+
+.tinder-card-shell label {
+  color: var(--headline);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.tinder-card-shell select {
+  width: 100%;
+  border: 1px solid rgba(30, 41, 59, 0.2);
+  border-radius: 12px;
+  padding: 11px 12px;
+  font-size: 0.95rem;
+  color: var(--headline);
+  background: #ffffff;
+  outline: none;
+}
+
+.tinder-card-shell select:focus {
+  border-color: rgba(242, 107, 37, 0.72);
+  box-shadow: 0 0 0 4px rgba(242, 107, 37, 0.18);
+}
+
+.tinder-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tinder-stats span {
+  border: 1px solid rgba(30, 41, 59, 0.14);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.tinder-stats strong {
+  color: var(--headline);
+  font-size: 1.05rem;
+}
+
+.tinder-stats small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.tinder-match-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tinder-asset-card {
+  border: 1px solid rgba(30, 41, 59, 0.14);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 13px;
+  display: grid;
+  gap: 9px;
+}
+
+.tinder-badge {
+  display: inline-flex;
+  align-self: start;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 4px 9px;
+}
+
+.tinder-owner {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.tinder-asset-card h3 {
+  margin: 0;
+  color: var(--headline);
+  font-size: 0.95rem;
+}
+
+.tinder-asset-card > strong {
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.tinder-asset-card img,
+.tinder-photo-placeholder {
+  width: 100%;
+  height: 140px;
+  border-radius: 11px;
+}
+
+.tinder-asset-card img {
+  object-fit: cover;
+  border: 1px solid rgba(30, 41, 59, 0.16);
+}
+
+.tinder-photo-placeholder {
+  border: 1px dashed rgba(30, 41, 59, 0.2);
+  background: #f8fafc;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+}
+
+.tinder-asset-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 7px;
+}
+
+.tinder-asset-card li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.83rem;
+}
+
+.tinder-asset-card li span {
+  color: var(--muted);
+}
+
+.tinder-asset-card li strong {
+  color: var(--headline);
+  text-align: right;
+}
+
+.tinder-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tinder-actions button {
+  border: none;
+  border-radius: 12px;
+  padding: 12px;
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.tinder-pass {
+  background: linear-gradient(140deg, #64748b, #475569);
+}
+
+.tinder-like {
+  background: linear-gradient(140deg, var(--primary), var(--primary-strong));
+  box-shadow: 0 12px 20px rgba(242, 107, 37, 0.25);
+}
+
+.tinder-reset {
+  border: 1px solid rgba(30, 41, 59, 0.2);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--headline);
+  font-weight: 700;
+  font-size: 0.84rem;
+  padding: 9px 12px;
+  justify-self: start;
+  cursor: pointer;
+}
+
+.tinder-empty {
+  border: 1px dashed rgba(30, 41, 59, 0.22);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
+}
+
+.tinder-empty p {
+  margin: 0;
+}
+
+.tinder-empty button {
+  justify-self: start;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(140deg, var(--primary), var(--primary-strong));
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 0.84rem;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+@media (max-width: 1120px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .app-sidebar {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+
+  .app-sidebar-logo {
+    max-width: 160px;
+  }
+
+  .app-sidebar-nav {
+    margin-top: 0;
+    width: auto;
+  }
+
+  .app-sidebar-logout {
+    margin-top: 0;
+  }
+
+  .assets-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .assets-list {
+    max-height: none;
+  }
+
+  .tinder-match-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .assets-page {
+    padding: 14px;
+  }
+
+  .app-sidebar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-sidebar-nav {
+    width: 100%;
+  }
+
+  .app-sidebar-nav button {
+    text-align: center;
+  }
+
+  .assets-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .assets-user {
+    width: 100%;
+  }
+
+  .assets-type-switcher {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .assets-grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .assets-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tinder-stats,
+  .tinder-actions {
+    grid-template-columns: 1fr;
+  }
+}
