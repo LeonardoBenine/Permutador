@@ -714,7 +714,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               }}
               type="button"
             >
-              Ativos
+              Meus Ativos
             </button>
             <button
               className={activeMenu === 'tinder' ? 'active' : ''}
@@ -724,7 +724,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               }}
               type="button"
             >
-              Tinder de ativos
+              Vamos Trocar?
             </button>
           </nav>
 
@@ -743,12 +743,13 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                 {activeMenu === 'assets'
                   ? 'Gerencie os seus ativos'
                   : 'Escolha ativos para trocas'}
-              </span>
-            </div>
-          </header>
+                </span>
+              </div>
+            </header>
 
-          {activeMenu === 'assets' ? (
-            <div className="assets-layout">
+          <div className="app-main-content">
+            {activeMenu === 'assets' ? (
+              <div className="assets-layout">
               <section className="assets-form-card">
                 <div className="assets-form-header">
                   <p>Cadastro de ativos</p>
@@ -1043,10 +1044,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   </div>
                 )}
               </aside>
-            </div>
-          ) : (
-            <section className="tinder-layout">
-              <article className="tinder-card-shell">
+              </div>
+            ) : (
+              <section className="tinder-layout">
+                <article className="tinder-card-shell">
                 <div className="tinder-header">
                   <p>Tinder de ativos</p>
                   <h2>Escolha o que voce trocaria e avance no match</h2>
@@ -1156,9 +1157,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                     </button>
                   </>
                 )}
-              </article>
-            </section>
-          )}
+                </article>
+              </section>
+            )}
+          </div>
         </section>
       </main>
     </div>
