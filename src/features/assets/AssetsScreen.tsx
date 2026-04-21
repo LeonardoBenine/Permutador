@@ -2,6 +2,7 @@
 import type { ChangeEvent, FormEvent } from 'react'
 import brandLogo from '../../assets/logo-permutador-oficial.png'
 import type { AuthUser } from '../auth/types'
+import { lookupAddressByCep } from '../auth/cepService'
 import { assetsService } from './assetsService'
 import type {
   ApartmentAsset,
@@ -37,12 +38,27 @@ const assetTypeLabels: Record<AssetType, string> = {
   land: 'Terreno',
 }
 
+interface FipeOption {
+  aliases?: string[]
+  code: string
+  name: string
+  sourceCodes?: string[]
+}
+
 function createInitialCarForm(): CarAssetForm {
   return {
     brand: '',
+    brandCode: '',
+    cep: '',
+    city: '',
+    description: '',
+    estimatedValue: '',
     mileage: '',
     model: '',
+    modelCode: '',
     photos: [],
+    state: '',
+    yearCode: '',
     year: '',
   }
 }
@@ -53,10 +69,18 @@ function createInitialPropertyForm(): PropertyAssetForm {
     bathrooms: '',
     bedrooms: '',
     builtArea: '',
+    cep: '',
+    city: '',
+    complement: '',
     description: '',
+    district: '',
+    estimatedValue: '',
     floor: '',
     landArea: '',
+    number: '',
     photos: [],
+    state: '',
+    street: '',
   }
 }
 
@@ -64,13 +88,229 @@ function parsePositiveNumber(value: string): number {
   return Number(value.replace(',', '.'))
 }
 
+function normalizeCep(value: string): string {
+  return value.replace(/\D/g, '').slice(0, 8)
+}
+
+function formatCep(value: string): string {
+  const sanitized = normalizeCep(value)
+
+  if (sanitized.length <= 5) {
+    return sanitized
+  }
+
+  return `${sanitized.slice(0, 5)}-${sanitized.slice(5)}`
+}
+
+function buildPropertyAddress(form: Pick<
+  PropertyAssetForm,
+  'city' | 'complement' | 'district' | 'number' | 'state' | 'street'
+>): string {
+  const street = form.street.trim()
+  const number = form.number.trim()
+  const complement = form.complement.trim()
+  const district = form.district.trim()
+  const city = form.city.trim()
+  const state = form.state.trim().toUpperCase()
+
+  const streetWithNumber = [street, number].filter(Boolean).join(', ')
+  const cityWithState = city && state ? `${city}/${state}` : city || state
+
+  return [streetWithNumber, complement, district, cityWithState]
+    .filter(Boolean)
+    .join(' - ')
+}
+
+function hasResolvedPropertyAddress(form: PropertyAssetForm): boolean {
+  const cep = normalizeCep(form.cep)
+
+  return (
+    cep.length === 8 &&
+    Boolean(form.street.trim()) &&
+    Boolean(form.city.trim()) &&
+    form.state.trim().length === 2
+  )
+}
+
+function parsePropertyAddress(address: string): Partial<PropertyAssetForm> {
+  const trimmed = address.trim()
+
+  if (!trimmed) {
+    return {}
+  }
+
+  const cityStateMatch = trimmed.match(/(?:-|,)\s*([^,/]+?)\s*\/\s*([a-z]{2})\s*$/i)
+  const city = cityStateMatch?.[1]?.trim() ?? ''
+  const state = cityStateMatch?.[2]?.trim().toUpperCase() ?? ''
+  const withoutCityState =
+    cityStateMatch && cityStateMatch.index !== undefined
+      ? trimmed
+          .slice(0, cityStateMatch.index)
+          .replace(/[,\-]\s*$/, '')
+          .trim()
+      : trimmed
+
+  const sections = withoutCityState
+    .split('-')
+    .map((section) => section.trim())
+    .filter(Boolean)
+  const streetAndNumber = sections[0] ?? ''
+  const district = sections[1] ?? ''
+  const complement = sections.length > 2 ? sections.slice(2).join(' - ') : ''
+  const streetNumberMatch = streetAndNumber.match(/^(.*?)(?:,\s*|\s+)(\d+[a-z0-9/-]*)$/i)
+  const street = streetNumberMatch?.[1]?.trim() || streetAndNumber
+  const number = streetNumberMatch?.[2]?.trim() ?? ''
+
+  return {
+    city,
+    complement,
+    district,
+    number,
+    state,
+    street,
+  }
+}
+
+function normalizeSearchValue(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+function formatBrandListLabel(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ')
+
+  if (!normalized) return ''
+
+  const formatToken = (token: string) => {
+    if (!token) return token
+    if (token.length <= 3) return token.toUpperCase()
+    return `${token[0].toUpperCase()}${token.slice(1)}`
+  }
+
+  return normalized
+    .split(' ')
+    .map((word) => word.split('-').map((part) => formatToken(part)).join('-'))
+    .join(' ')
+}
+
+function brandDedupKey(value: string): string {
+  const normalized = normalizeSearchValue(value).replace(/[^a-z0-9]/g, '')
+
+  if (normalized === 'chery' || normalized === 'caoachery' || normalized === 'caoacherychery') {
+    return 'chery'
+  }
+
+  return normalized
+}
+
+function dedupeBrandOptions(brands: FipeOption[]): FipeOption[] {
+  const grouped = new Map<string, FipeOption[]>()
+
+  for (const brand of brands) {
+    const key = brandDedupKey(brand.name)
+    const existing = grouped.get(key) ?? []
+    existing.push(brand)
+    grouped.set(key, existing)
+  }
+
+  const deduped: FipeOption[] = []
+
+  for (const group of grouped.values()) {
+    const preferred = [...group].sort((a, b) => {
+      const aHasSlash = a.name.includes('/') ? 1 : 0
+      const bHasSlash = b.name.includes('/') ? 1 : 0
+
+      if (aHasSlash !== bHasSlash) {
+        return aHasSlash - bHasSlash
+      }
+
+      if (a.name.length !== b.name.length) {
+        return a.name.length - b.name.length
+      }
+
+      return Number(a.code) - Number(b.code)
+    })[0]
+
+    const aliases = new Set<string>()
+
+    for (const item of group) {
+      const formattedName = formatBrandListLabel(item.name)
+
+      if (formattedName) {
+        aliases.add(formattedName)
+      }
+
+      for (const segment of item.name.split('/')) {
+        const formattedSegment = formatBrandListLabel(segment)
+
+        if (formattedSegment) {
+          aliases.add(formattedSegment)
+        }
+      }
+    }
+
+    deduped.push({
+      aliases: Array.from(aliases),
+      code: preferred.code,
+      name: formatBrandListLabel(preferred.name),
+      sourceCodes: group.map((item) => item.code),
+    })
+  }
+
+  return deduped.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+}
+
+function createScopedModelCode(brandCode: string, modelCode: string): string {
+  return `${brandCode}::${modelCode}`
+}
+
+function parseScopedModelCode(
+  scopedModelCode: string,
+  fallbackBrandCode: string,
+): { brandCode: string; modelCode: string } {
+  const parts = scopedModelCode.split('::')
+
+  if (parts.length === 2) {
+    const [brandCode = '', modelCode = ''] = parts
+    return {
+      brandCode: brandCode.trim(),
+      modelCode: modelCode.trim(),
+    }
+  }
+
+  return {
+    brandCode: fallbackBrandCode.trim(),
+    modelCode: scopedModelCode.trim(),
+  }
+}
+
 function formatNumber(value: number): string {
   return new Intl.NumberFormat('pt-BR').format(value)
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    currency: 'BRL',
+    style: 'currency',
+  }).format(value)
 }
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleDateString('pt-BR', {
     day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString('pt-BR', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
     month: '2-digit',
     year: 'numeric',
   })
@@ -84,7 +324,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
       const result = reader.result
 
       if (typeof result !== 'string') {
-        reject(new Error('Nao foi possivel processar uma das imagens.'))
+        reject(new Error('Não foi possível processar uma das imagens.'))
         return
       }
 
@@ -92,7 +332,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
     }
 
     reader.onerror = () => {
-      reject(new Error('Nao foi possivel processar uma das imagens.'))
+      reject(new Error('Não foi possível processar uma das imagens.'))
     }
 
     reader.readAsDataURL(file)
@@ -101,43 +341,65 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 function propertyValidationError(
   form: PropertyAssetForm,
-  options: { includeBuiltArea: boolean; includeFloor: boolean },
+  options: {
+    includeBuiltArea: boolean
+    includeFloor: boolean
+    requireEstimatedValue?: boolean
+  },
 ): string | null {
-  if (!form.address.trim()) {
-    return 'Preencha o endereco do imovel.'
+  if (options.requireEstimatedValue ?? true) {
+    const estimatedValue = parsePositiveNumber(form.estimatedValue)
+
+    if (Number.isNaN(estimatedValue) || estimatedValue <= 0) {
+      return 'Informe o valor estimado com valor válido.'
+    }
+  }
+
+  const cep = normalizeCep(form.cep)
+
+  if (cep.length !== 8) {
+    return 'Informe um CEP válido com 8 números.'
+  }
+
+  if (!hasResolvedPropertyAddress(form)) {
+    return 'Busque um CEP válido para preencher rua, bairro, cidade e UF.'
+  }
+
+  if (!form.number.trim()) {
+    return 'Informe o número do imóvel.'
   }
 
   const landArea = parsePositiveNumber(form.landArea)
 
   if (Number.isNaN(landArea) || landArea <= 0) {
-    return 'Informe a metragem do terreno com valor valido.'
+    return 'Informe a metragem do terreno com valor válido.'
   }
 
   if (options.includeBuiltArea) {
     const builtArea = parsePositiveNumber(form.builtArea)
 
     if (Number.isNaN(builtArea) || builtArea <= 0) {
-      return 'Informe a area construida com valor valido.'
+      return 'Informe a área construída com valor válido.'
     }
   }
 
   const bathrooms = parsePositiveNumber(form.bathrooms)
 
   if (Number.isNaN(bathrooms) || bathrooms < 0) {
-    return 'Informe a quantidade de banheiros com valor valido.'
+    return 'Informe a quantidade de banheiros com valor válido.'
   }
 
   const bedrooms = parsePositiveNumber(form.bedrooms)
 
   if (Number.isNaN(bedrooms) || bedrooms < 0) {
-    return 'Informe a quantidade de quartos com valor valido.'
+    return 'Informe a quantidade de quartos com valor válido.'
   }
 
   if (options.includeFloor) {
     const floor = parsePositiveNumber(form.floor)
 
     if (Number.isNaN(floor) || floor < 0) {
-      return 'Informe o andar com valor valido.'
+      return 'Informe o andar com valor válido.'
     }
   }
 
@@ -148,10 +410,49 @@ type AppMenu = 'assets' | 'tinder'
 
 function getAssetHeadline(asset: AssetRecord): string {
   if (asset.type === 'car') {
-    return `${asset.brand} ${asset.model} ${asset.year}`
+    return `${asset.brand} ${asset.model || 'Modelo nao informado'} ${asset.year}`
   }
 
   return asset.address
+}
+
+function createPropertyFormFromAsset(
+  asset: HouseAsset | ApartmentAsset | LandAsset,
+): PropertyAssetForm {
+  const parsedAddress = parsePropertyAddress(asset.address)
+  const street = (asset.street ?? parsedAddress.street ?? '').trim()
+  const number = (asset.number ?? parsedAddress.number ?? '').trim()
+  const complement = (asset.complement ?? parsedAddress.complement ?? '').trim()
+  const district = (asset.district ?? parsedAddress.district ?? '').trim()
+  const city = (asset.city ?? parsedAddress.city ?? '').trim()
+  const state = (asset.state ?? parsedAddress.state ?? '').trim().toUpperCase()
+  const cep = normalizeCep(asset.cep ?? '')
+
+  const baseForm: PropertyAssetForm = {
+    address: asset.address,
+    bathrooms: String(asset.bathrooms),
+    bedrooms: String(asset.bedrooms),
+    builtArea: '',
+    cep,
+    city,
+    complement,
+    description: asset.description,
+    district,
+    estimatedValue: String(asset.estimatedValue),
+    floor: '',
+    landArea: String(asset.landArea),
+    number,
+    photos: [...asset.photos],
+    state,
+    street,
+  }
+
+  return {
+    ...baseForm,
+    address: buildPropertyAddress(baseForm) || asset.address,
+    builtArea: 'builtArea' in asset ? String(asset.builtArea) : '',
+    floor: 'floor' in asset ? String(asset.floor) : '',
+  }
 }
 
 export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
@@ -159,6 +460,30 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [activeMenu, setActiveMenu] = useState<AppMenu>('assets')
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [isEstimatingCarValue, setIsEstimatingCarValue] = useState(false)
+  const [isLoadingCarCatalog, setIsLoadingCarCatalog] = useState(false)
+  const [isLoadingCarModels, setIsLoadingCarModels] = useState(false)
+  const [isLoadingCarYears, setIsLoadingCarYears] = useState(false)
+  const [isLookingUpCarCep, setIsLookingUpCarCep] = useState(false)
+  const [isLookingUpHouseCep, setIsLookingUpHouseCep] = useState(false)
+  const [isLookingUpApartmentCep, setIsLookingUpApartmentCep] = useState(false)
+  const [isLookingUpLandCep, setIsLookingUpLandCep] = useState(false)
+  const [carEstimationError, setCarEstimationError] = useState<string | null>(null)
+  const [carEstimationConfidence, setCarEstimationConfidence] = useState<number | null>(null)
+  const [houseEstimationError, setHouseEstimationError] = useState<string | null>(null)
+  const [houseEstimationConfidence, setHouseEstimationConfidence] = useState<number | null>(null)
+  const [landEstimationError, setLandEstimationError] = useState<string | null>(null)
+  const [landEstimationConfidence, setLandEstimationConfidence] = useState<number | null>(null)
+  const [carCatalogError, setCarCatalogError] = useState<string | null>(null)
+  const [carCepError, setCarCepError] = useState<string | null>(null)
+  const [houseCepError, setHouseCepError] = useState<string | null>(null)
+  const [apartmentCepError, setApartmentCepError] = useState<string | null>(null)
+  const [landCepError, setLandCepError] = useState<string | null>(null)
+  const [carBrands, setCarBrands] = useState<FipeOption[]>([])
+  const [carModels, setCarModels] = useState<FipeOption[]>([])
+  const [carYearOptions, setCarYearOptions] = useState<FipeOption[]>([])
+  const [isEstimatingHouseValue, setIsEstimatingHouseValue] = useState(false)
+  const [isEstimatingLandValue, setIsEstimatingLandValue] = useState(false)
   const [feedback, setFeedback] = useState<AssetFeedback | null>(null)
   const [swipeFeedback, setSwipeFeedback] = useState<AssetFeedback | null>(null)
   const [carForm, setCarForm] = useState<CarAssetForm>(createInitialCarForm)
@@ -177,7 +502,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [selectedOwnAssetId, setSelectedOwnAssetId] = useState('')
 
   const ownerFirstName = useMemo(
-    () => user.name.trim().split(' ')[0] || 'Usuario',
+    () => user.name.trim().split(' ')[0] || 'Usuário',
     [user.name],
   )
 
@@ -233,6 +558,780 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     })
   }, [assets])
 
+  useEffect(() => {
+    let isCancelled = false
+    setIsLoadingCarCatalog(true)
+    setCarCatalogError(null)
+
+    void assetsService
+      .listCarBrands()
+      .then((brands) => {
+        if (isCancelled) {
+          return
+        }
+
+        setCarBrands(dedupeBrandOptions(brands))
+        setIsLoadingCarCatalog(false)
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return
+        }
+
+        setIsLoadingCarCatalog(false)
+        setCarCatalogError('Nao foi possivel carregar marcas FIPE.')
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!carForm.brandCode) {
+      setCarModels([])
+      setCarYearOptions([])
+      return
+    }
+
+    let isCancelled = false
+    setIsLoadingCarModels(true)
+    setCarCatalogError(null)
+
+    const selectedBrand =
+      carBrands.find((brand) => brand.code === carForm.brandCode) ?? null
+    const sourceBrandCodes =
+      selectedBrand?.sourceCodes && selectedBrand.sourceCodes.length > 0
+        ? selectedBrand.sourceCodes
+        : [carForm.brandCode]
+
+    void Promise.all(
+      sourceBrandCodes.map((sourceBrandCode) =>
+        assetsService.listCarModels(sourceBrandCode).then((models) => ({
+          models,
+          sourceBrandCode,
+        })),
+      ),
+    )
+      .then((modelGroups) => {
+        if (isCancelled) {
+          return
+        }
+
+        const mergedModels: FipeOption[] = modelGroups.flatMap((group) =>
+          group.models.map((model) => ({
+            code: createScopedModelCode(group.sourceBrandCode, model.code),
+            name: model.name,
+          })),
+        )
+
+        setCarModels(mergedModels)
+        setIsLoadingCarModels(false)
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return
+        }
+
+        setIsLoadingCarModels(false)
+        setCarCatalogError('Nao foi possivel carregar modelos FIPE.')
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [carBrands, carForm.brandCode])
+
+  useEffect(() => {
+    if (!carForm.brandCode || !carForm.modelCode) {
+      setCarYearOptions([])
+      return
+    }
+
+    const { brandCode: sourceBrandCode, modelCode: sourceModelCode } =
+      parseScopedModelCode(carForm.modelCode, carForm.brandCode)
+
+    if (!sourceBrandCode || !sourceModelCode) {
+      setCarYearOptions([])
+      return
+    }
+
+    let isCancelled = false
+    setIsLoadingCarYears(true)
+    setCarCatalogError(null)
+
+    void assetsService
+      .listCarYears(sourceBrandCode, sourceModelCode)
+      .then((years) => {
+        if (isCancelled) {
+          return
+        }
+
+        setCarYearOptions(years)
+        setIsLoadingCarYears(false)
+      })
+      .catch(() => {
+        if (isCancelled) {
+          return
+        }
+
+        setIsLoadingCarYears(false)
+        setCarCatalogError('Nao foi possivel carregar versoes FIPE.')
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [carForm.brandCode, carForm.modelCode])
+
+  useEffect(() => {
+    if (!carForm.model || carForm.modelCode || carModels.length === 0) {
+      return
+    }
+
+    const matchedModel = findOptionByName(carModels, carForm.model)
+
+    if (!matchedModel) {
+      return
+    }
+
+    setCarForm((previous) => ({
+      ...previous,
+      modelCode: matchedModel.code,
+    }))
+  }, [carForm.model, carForm.modelCode, carModels])
+
+  useEffect(() => {
+    if (!carForm.brand || carForm.brandCode || carBrands.length === 0) {
+      return
+    }
+
+    const matchedBrand = findOptionByName(carBrands, carForm.brand)
+
+    if (!matchedBrand) {
+      return
+    }
+
+    setCarForm((previous) => ({
+      ...previous,
+      brandCode: matchedBrand.code,
+    }))
+  }, [carBrands, carForm.brand, carForm.brandCode])
+
+  useEffect(() => {
+    if (!carForm.year || carForm.yearCode || carYearOptions.length === 0) {
+      return
+    }
+
+    const matchedYearCode =
+      carYearOptions.find((yearOption) => yearOption.code.startsWith(`${carForm.year}-`))
+        ?.code ?? ''
+
+    if (!matchedYearCode) {
+      return
+    }
+
+    setCarForm((previous) => ({
+      ...previous,
+      yearCode: matchedYearCode,
+    }))
+  }, [carForm.year, carForm.yearCode, carYearOptions])
+
+  useEffect(() => {
+    if (assetType !== 'car') {
+      setIsLookingUpCarCep(false)
+      setCarCepError(null)
+      return
+    }
+
+    const cep = normalizeCep(carForm.cep)
+
+    if (cep.length !== 8) {
+      setIsLookingUpCarCep(false)
+      setCarCepError(null)
+      return
+    }
+
+    let isCancelled = false
+    setIsLookingUpCarCep(true)
+    setCarCepError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void lookupAddressByCep(cep)
+        .then((address) => {
+          if (isCancelled) {
+            return
+          }
+
+          const city = address.city.trim()
+          const state = address.state.trim().toUpperCase()
+
+          setCarForm((previous) => ({
+            ...previous,
+            city,
+            state,
+          }))
+          setIsLookingUpCarCep(false)
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return
+          }
+
+          setCarForm((previous) => ({
+            ...previous,
+            city: '',
+            state: '',
+          }))
+          setIsLookingUpCarCep(false)
+          setCarCepError((error as Error).message)
+        })
+    }, 350)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [assetType, carForm.cep])
+
+  useEffect(() => {
+    if (assetType !== 'house') {
+      setIsLookingUpHouseCep(false)
+      setHouseCepError(null)
+      return
+    }
+
+    const cep = normalizeCep(houseForm.cep)
+
+    if (cep.length !== 8) {
+      setIsLookingUpHouseCep(false)
+      setHouseCepError(null)
+      return
+    }
+
+    let isCancelled = false
+    setIsLookingUpHouseCep(true)
+    setHouseCepError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void lookupAddressByCep(cep)
+        .then((address) => {
+          if (isCancelled) {
+            return
+          }
+
+          const city = address.city.trim()
+          const district = address.district.trim()
+          const state = address.state.trim().toUpperCase()
+          const street = address.street.trim()
+
+          setHouseForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: city || previous.city,
+              district: district || previous.district,
+              state: state || previous.state,
+              street: street || previous.street,
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpHouseCep(false)
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return
+          }
+
+          setHouseForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: '',
+              district: '',
+              state: '',
+              street: '',
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpHouseCep(false)
+          setHouseCepError((error as Error).message)
+        })
+    }, 350)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [assetType, houseForm.cep])
+
+  useEffect(() => {
+    if (assetType !== 'apartment') {
+      setIsLookingUpApartmentCep(false)
+      setApartmentCepError(null)
+      return
+    }
+
+    const cep = normalizeCep(apartmentForm.cep)
+
+    if (cep.length !== 8) {
+      setIsLookingUpApartmentCep(false)
+      setApartmentCepError(null)
+      return
+    }
+
+    let isCancelled = false
+    setIsLookingUpApartmentCep(true)
+    setApartmentCepError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void lookupAddressByCep(cep)
+        .then((address) => {
+          if (isCancelled) {
+            return
+          }
+
+          const city = address.city.trim()
+          const district = address.district.trim()
+          const state = address.state.trim().toUpperCase()
+          const street = address.street.trim()
+
+          setApartmentForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: city || previous.city,
+              district: district || previous.district,
+              state: state || previous.state,
+              street: street || previous.street,
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpApartmentCep(false)
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return
+          }
+
+          setApartmentForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: '',
+              district: '',
+              state: '',
+              street: '',
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpApartmentCep(false)
+          setApartmentCepError((error as Error).message)
+        })
+    }, 350)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [assetType, apartmentForm.cep])
+
+  useEffect(() => {
+    if (assetType !== 'land') {
+      setIsLookingUpLandCep(false)
+      setLandCepError(null)
+      return
+    }
+
+    const cep = normalizeCep(landForm.cep)
+
+    if (cep.length !== 8) {
+      setIsLookingUpLandCep(false)
+      setLandCepError(null)
+      return
+    }
+
+    let isCancelled = false
+    setIsLookingUpLandCep(true)
+    setLandCepError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void lookupAddressByCep(cep)
+        .then((address) => {
+          if (isCancelled) {
+            return
+          }
+
+          const city = address.city.trim()
+          const district = address.district.trim()
+          const state = address.state.trim().toUpperCase()
+          const street = address.street.trim()
+
+          setLandForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: city || previous.city,
+              district: district || previous.district,
+              state: state || previous.state,
+              street: street || previous.street,
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpLandCep(false)
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return
+          }
+
+          setLandForm((previous) => {
+            const nextForm = {
+              ...previous,
+              city: '',
+              district: '',
+              state: '',
+              street: '',
+            }
+
+            return {
+              ...nextForm,
+              address: buildPropertyAddress(nextForm),
+            }
+          })
+          setIsLookingUpLandCep(false)
+          setLandCepError((error as Error).message)
+        })
+    }, 350)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [assetType, landForm.cep])
+
+  useEffect(() => {
+    if (assetType !== 'car') {
+      setIsEstimatingCarValue(false)
+      setCarEstimationError(null)
+      setCarEstimationConfidence(null)
+      return
+    }
+
+    const brand = carForm.brand.trim()
+    const cep = normalizeCep(carForm.cep)
+    const city = carForm.city.trim()
+    const model = carForm.model.trim()
+    const state = carForm.state.trim().toUpperCase()
+    const year = parsePositiveNumber(carForm.year)
+    const mileage = parsePositiveNumber(carForm.mileage)
+    const { brandCode: sourceBrandCode, modelCode: sourceModelCode } =
+      parseScopedModelCode(carForm.modelCode, carForm.brandCode)
+
+    if (
+      !brand ||
+      cep.length !== 8 ||
+      !city ||
+      !model ||
+      isLookingUpCarCep ||
+      state.length !== 2 ||
+      Number.isNaN(year) ||
+      year < 1900 ||
+      year > new Date().getFullYear() + 1 ||
+      Number.isNaN(mileage) ||
+      mileage < 0
+    ) {
+      setIsEstimatingCarValue(false)
+      setCarEstimationError(null)
+      setCarEstimationConfidence(null)
+      setCarForm((previous) =>
+        previous.estimatedValue
+          ? {
+              ...previous,
+              estimatedValue: '',
+            }
+          : previous,
+      )
+      return
+    }
+
+    let isCancelled = false
+    setIsEstimatingCarValue(true)
+    setCarEstimationError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void assetsService
+        .estimateCarValue({
+          brand,
+          brandId: sourceBrandCode || undefined,
+          carCity: city,
+          carState: state,
+          mileage,
+          model,
+          modelId: sourceModelCode || undefined,
+          ownerEmail: user.email,
+          yearCode: carForm.yearCode || undefined,
+          year,
+        })
+        .then((valuation) => {
+          if (isCancelled) {
+            return
+          }
+
+          setCarForm((previous) => ({
+            ...previous,
+            estimatedValue: String(valuation.estimatedValue),
+          }))
+          setCarEstimationConfidence(valuation.audit.confidence)
+          setIsEstimatingCarValue(false)
+        })
+        .catch(() => {
+          if (isCancelled) {
+            return
+          }
+
+          setIsEstimatingCarValue(false)
+          setCarEstimationConfidence(null)
+          setCarEstimationError(
+            'Nao foi possivel calcular o valor estimado por IA agora.',
+          )
+        })
+    }, 450)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    assetType,
+    carForm.brand,
+    carForm.brandCode,
+    carForm.cep,
+    carForm.city,
+    carForm.mileage,
+    carForm.model,
+    carForm.modelCode,
+    carForm.state,
+    carForm.year,
+    carForm.yearCode,
+    isLookingUpCarCep,
+    user.email,
+  ])
+
+  useEffect(() => {
+    if (assetType !== 'house') {
+      setIsEstimatingHouseValue(false)
+      setHouseEstimationError(null)
+      setHouseEstimationConfidence(null)
+      return
+    }
+
+    const landArea = parsePositiveNumber(houseForm.landArea)
+    const builtArea = parsePositiveNumber(houseForm.builtArea)
+    const bathrooms = parsePositiveNumber(houseForm.bathrooms)
+    const bedrooms = parsePositiveNumber(houseForm.bedrooms)
+    const address = buildPropertyAddress(houseForm)
+    const hasResolvedAddress = hasResolvedPropertyAddress(houseForm)
+
+    if (
+      Number.isNaN(landArea) ||
+      landArea <= 0 ||
+      Number.isNaN(builtArea) ||
+      builtArea <= 0 ||
+      Number.isNaN(bathrooms) ||
+      bathrooms < 0 ||
+      Number.isNaN(bedrooms) ||
+      bedrooms < 0 ||
+      !hasResolvedAddress ||
+      isLookingUpHouseCep
+    ) {
+      setIsEstimatingHouseValue(false)
+      setHouseEstimationError(null)
+      setHouseEstimationConfidence(null)
+      setHouseForm((previous) =>
+        previous.estimatedValue
+          ? {
+              ...previous,
+              estimatedValue: '',
+            }
+          : previous,
+      )
+      return
+    }
+
+    let isCancelled = false
+    setIsEstimatingHouseValue(true)
+    setHouseEstimationError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void assetsService
+        .estimatePropertyValue({
+          address,
+          bathrooms,
+          bedrooms,
+          builtArea,
+          landArea,
+          ownerEmail: user.email,
+          type: 'house',
+        })
+        .then((valuation) => {
+          if (isCancelled) {
+            return
+          }
+
+          setHouseForm((previous) => ({
+            ...previous,
+            estimatedValue: String(valuation.estimatedValue),
+          }))
+          setHouseEstimationConfidence(valuation.confidence)
+          setIsEstimatingHouseValue(false)
+        })
+        .catch(() => {
+          if (isCancelled) {
+            return
+          }
+
+          setIsEstimatingHouseValue(false)
+          setHouseEstimationConfidence(null)
+          setHouseEstimationError('Não foi possível calcular o valor da casa agora.')
+        })
+    }, 450)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    assetType,
+    houseForm.bathrooms,
+    houseForm.bedrooms,
+    houseForm.builtArea,
+    houseForm.cep,
+    houseForm.city,
+    houseForm.complement,
+    houseForm.district,
+    houseForm.landArea,
+    houseForm.number,
+    houseForm.state,
+    houseForm.street,
+    isLookingUpHouseCep,
+    user.email,
+  ])
+
+  useEffect(() => {
+    if (assetType !== 'land') {
+      setIsEstimatingLandValue(false)
+      setLandEstimationError(null)
+      setLandEstimationConfidence(null)
+      return
+    }
+
+    const landArea = parsePositiveNumber(landForm.landArea)
+    const address = buildPropertyAddress(landForm)
+    const hasResolvedAddress = hasResolvedPropertyAddress(landForm)
+
+    if (Number.isNaN(landArea) || landArea <= 0 || !hasResolvedAddress || isLookingUpLandCep) {
+      setIsEstimatingLandValue(false)
+      setLandEstimationError(null)
+      setLandEstimationConfidence(null)
+      setLandForm((previous) =>
+        previous.estimatedValue
+          ? {
+              ...previous,
+              estimatedValue: '',
+            }
+          : previous,
+      )
+      return
+    }
+
+    let isCancelled = false
+    setIsEstimatingLandValue(true)
+    setLandEstimationError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void assetsService
+        .estimatePropertyValue({
+          address,
+          landArea,
+          ownerEmail: user.email,
+          type: 'land',
+        })
+        .then((valuation) => {
+          if (isCancelled) {
+            return
+          }
+
+          setLandForm((previous) => ({
+            ...previous,
+            estimatedValue: String(valuation.estimatedValue),
+          }))
+          setLandEstimationConfidence(valuation.confidence)
+          setIsEstimatingLandValue(false)
+        })
+        .catch(() => {
+          if (isCancelled) {
+            return
+          }
+
+          setIsEstimatingLandValue(false)
+          setLandEstimationConfidence(null)
+          setLandEstimationError('Não foi possível calcular o valor do terreno agora.')
+        })
+    }, 450)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    assetType,
+    landForm.cep,
+    landForm.city,
+    landForm.complement,
+    landForm.district,
+    landForm.landArea,
+    landForm.number,
+    landForm.state,
+    landForm.street,
+    isLookingUpLandCep,
+    user.email,
+  ])
+
+  function findOptionByName(options: FipeOption[], value: string): FipeOption | null {
+    const normalized = normalizeSearchValue(value)
+
+    if (!normalized) {
+      return null
+    }
+
+    return (
+      options.find((option) => {
+        const candidates = [option.name, ...(option.aliases ?? [])]
+
+        return candidates.some(
+          (candidate) => normalizeSearchValue(candidate) === normalized,
+        )
+      }) ??
+      null
+    )
+  }
+
   function clearFeedback() {
     if (feedback) {
       setFeedback(null)
@@ -241,9 +1340,25 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 
   function resetAllForms() {
     setCarForm(createInitialCarForm())
+    setCarCepError(null)
+    setIsLookingUpCarCep(false)
+    setCarEstimationError(null)
+    setCarEstimationConfidence(null)
     setHouseForm(createInitialPropertyForm())
+    setIsLookingUpHouseCep(false)
+    setHouseCepError(null)
+    setIsEstimatingHouseValue(false)
+    setHouseEstimationError(null)
+    setHouseEstimationConfidence(null)
     setApartmentForm(createInitialPropertyForm())
+    setIsLookingUpApartmentCep(false)
+    setApartmentCepError(null)
     setLandForm(createInitialPropertyForm())
+    setIsLookingUpLandCep(false)
+    setLandCepError(null)
+    setIsEstimatingLandValue(false)
+    setLandEstimationError(null)
+    setLandEstimationConfidence(null)
   }
 
   function upsertAssetList(nextAsset: AssetRecord, isEditing: boolean) {
@@ -361,7 +1476,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       .slice(0, availableSlots)
 
     if (validFiles.length === 0) {
-      setFeedback({ text: 'Nenhuma imagem valida foi selecionada.', tone: 'error' })
+      setFeedback({ text: 'Nenhuma imagem válida foi selecionada.', tone: 'error' })
       return
     }
 
@@ -371,7 +1486,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 
       if (oversizedFiles.length > 0 || nonImageFiles.length > 0) {
         setFeedback({
-          text: 'Alguns arquivos foram ignorados. Use apenas imagens ate 5MB.',
+          text: 'Alguns arquivos foram ignorados. Use apenas imagens até 5MB.',
           tone: 'info',
         })
       }
@@ -387,64 +1502,92 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   ) {
     clearFeedback()
 
+    const updateFormState = (previous: PropertyAssetForm): PropertyAssetForm => {
+      const normalizedValue =
+        field === 'cep'
+          ? normalizeCep(value)
+          : field === 'state'
+            ? value.toUpperCase()
+            : value
+      const nextForm = {
+        ...previous,
+        [field]: normalizedValue,
+      }
+
+      if (
+        field === 'cep' ||
+        field === 'city' ||
+        field === 'complement' ||
+        field === 'district' ||
+        field === 'number' ||
+        field === 'state' ||
+        field === 'street'
+      ) {
+        return {
+          ...nextForm,
+          address: buildPropertyAddress(nextForm),
+        }
+      }
+
+      return nextForm
+    }
+
     if (type === 'house') {
-      setHouseForm((previous) => ({ ...previous, [field]: value }))
+      setHouseForm(updateFormState)
       return
     }
 
     if (type === 'apartment') {
-      setApartmentForm((previous) => ({ ...previous, [field]: value }))
+      setApartmentForm(updateFormState)
       return
     }
 
-    setLandForm((previous) => ({ ...previous, [field]: value }))
+    setLandForm(updateFormState)
   }
 
   function startEditingAsset(asset: AssetRecord) {
     setEditingAssetId(asset.id)
     setAssetType(asset.type)
+    setIsLookingUpCarCep(false)
+    setCarCepError(null)
+    setIsLookingUpHouseCep(false)
+    setHouseCepError(null)
+    setIsLookingUpApartmentCep(false)
+    setApartmentCepError(null)
+    setIsLookingUpLandCep(false)
+    setLandCepError(null)
+    setHouseEstimationError(null)
+    setHouseEstimationConfidence(null)
+    setLandEstimationError(null)
+    setLandEstimationConfidence(null)
 
     if (asset.type === 'car') {
+      const matchedBrand = findOptionByName(carBrands, asset.brand)
+      setCarEstimationConfidence(asset.estimatedValueAudit?.confidence ?? null)
       setCarForm({
         brand: asset.brand,
+        brandCode: matchedBrand?.code ?? '',
+        cep: asset.cep || '',
+        city: asset.city || '',
+        description: asset.description || '',
+        estimatedValue: String(asset.estimatedValue),
         mileage: String(asset.mileage),
         model: asset.model,
+        modelCode: '',
         photos: [...asset.photos],
+        state: asset.state || '',
+        yearCode: asset.estimatedValueAudit?.vehicleContext?.yearCode ?? '',
         year: String(asset.year),
       })
     } else if (asset.type === 'house') {
-      setHouseForm({
-        address: asset.address,
-        bathrooms: String(asset.bathrooms),
-        bedrooms: String(asset.bedrooms),
-        builtArea: String(asset.builtArea),
-        description: asset.description,
-        floor: '',
-        landArea: String(asset.landArea),
-        photos: [...asset.photos],
-      })
+      setCarEstimationConfidence(null)
+      setHouseForm(createPropertyFormFromAsset(asset))
     } else if (asset.type === 'apartment') {
-      setApartmentForm({
-        address: asset.address,
-        bathrooms: String(asset.bathrooms),
-        bedrooms: String(asset.bedrooms),
-        builtArea: String(asset.builtArea),
-        description: asset.description,
-        floor: String(asset.floor),
-        landArea: String(asset.landArea),
-        photos: [...asset.photos],
-      })
+      setCarEstimationConfidence(null)
+      setApartmentForm(createPropertyFormFromAsset(asset))
     } else {
-      setLandForm({
-        address: asset.address,
-        bathrooms: String(asset.bathrooms),
-        bedrooms: String(asset.bedrooms),
-        builtArea: '',
-        description: asset.description,
-        floor: '',
-        landArea: String(asset.landArea),
-        photos: [...asset.photos],
-      })
+      setCarEstimationConfidence(null)
+      setLandForm(createPropertyFormFromAsset(asset))
     }
 
     setFeedback({
@@ -457,7 +1600,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     setEditingAssetId(null)
     resetAllForms()
     setFeedback({
-      text: 'Edicao cancelada. Voce pode cadastrar um novo ativo.',
+      text: 'Edição cancelada. Você pode cadastrar um novo ativo.',
       tone: 'info',
     })
   }
@@ -482,7 +1625,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       text:
         decision === 'like'
           ? 'Ativo marcado como troca interessante.'
-          : 'Ativo pulado. Vamos para o proximo.',
+          : 'Ativo pulado. Vamos para o próximo.',
       tone: decision === 'like' ? 'success' : 'info',
     })
   }
@@ -498,7 +1641,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     )
     setSwipeRecords(nextOwnerSwipes)
     setSwipeFeedback({
-      text: 'Pilha reiniciada. Os ativos voltaram para avaliacao.',
+      text: 'Pilha reiniciada. Os ativos voltaram para avaliação.',
       tone: 'info',
     })
   }
@@ -511,8 +1654,45 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       setFeedback(null)
 
       if (assetType === 'car') {
+        setCarCepError(null)
+
         if (!carForm.brand.trim() || !carForm.model.trim()) {
           throw new Error('Preencha marca e modelo do carro.')
+        }
+
+        const cep = normalizeCep(carForm.cep)
+
+        if (cep.length !== 8) {
+          throw new Error('Informe um CEP valido com 8 numeros para o carro.')
+        }
+
+        if (isLookingUpCarCep) {
+          throw new Error('Aguarde a consulta do CEP terminar para salvar o carro.')
+        }
+
+        let city = carForm.city.trim()
+        let state = carForm.state.trim().toUpperCase()
+
+        if (!city || state.length !== 2) {
+          try {
+            const address = await lookupAddressByCep(cep)
+            city = address.city.trim()
+            state = address.state.trim().toUpperCase()
+            setCarForm((previous) => ({
+              ...previous,
+              city,
+              state,
+            }))
+            setCarCepError(null)
+          } catch (error) {
+            const message = (error as Error).message
+            setCarCepError(message)
+            throw new Error(message)
+          }
+        }
+
+        if (!city || state.length !== 2) {
+          throw new Error('Nao foi possivel identificar cidade/UF a partir do CEP.')
         }
 
         const year = parsePositiveNumber(carForm.year)
@@ -522,32 +1702,58 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
           year < 1900 ||
           year > new Date().getFullYear() + 1
         ) {
-          throw new Error('Informe um ano valido para o carro.')
+          throw new Error('Informe um ano válido para o carro.')
         }
 
         const mileage = parsePositiveNumber(carForm.mileage)
 
         if (Number.isNaN(mileage) || mileage < 0) {
-          throw new Error('Informe a quilometragem com valor valido.')
+          throw new Error('Informe a quilometragem com valor válido.')
         }
+
+        const { brandCode: sourceBrandCode, modelCode: sourceModelCode } =
+          parseScopedModelCode(carForm.modelCode, carForm.brandCode)
+
+        const valuation = await assetsService.estimateCarValue({
+          brand: carForm.brand.trim(),
+          brandId: sourceBrandCode || undefined,
+          carCity: city,
+          carState: state,
+          mileage,
+          model: carForm.model.trim(),
+          modelId: sourceModelCode || undefined,
+          ownerEmail: user.email,
+          yearCode: carForm.yearCode || undefined,
+          year,
+        })
 
         const isEditing = Boolean(editingAssetId)
         const savedAsset = editingAssetId
           ? await assetsService.updateAsset(user, editingAssetId, {
               brand: carForm.brand.trim(),
-              description: '',
+              cep,
+              city,
+              description: carForm.description.trim(),
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               mileage,
               model: carForm.model.trim(),
               photos: carForm.photos,
+              state,
               type: 'car',
               year,
             } as Omit<CarAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
           : await assetsService.createAsset(user, {
               brand: carForm.brand.trim(),
-              description: '',
+              cep,
+              city,
+              description: carForm.description.trim(),
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               mileage,
               model: carForm.model.trim(),
               photos: carForm.photos,
+              state,
               type: 'car',
               year,
             } as Omit<CarAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
@@ -556,42 +1762,90 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
         setCarForm(createInitialCarForm())
         setEditingAssetId(null)
         setFeedback({
-          text: isEditing ? 'Carro atualizado com sucesso.' : 'Carro cadastrado com sucesso.',
+          text: `${
+            isEditing ? 'Carro atualizado com sucesso.' : 'Carro cadastrado com sucesso.'
+          } Valor estimado em ${formatCurrency(
+            valuation.estimatedValue,
+          )} (confianca: ${Math.round(valuation.audit.confidence * 100)}%).`,
           tone: 'success',
         })
+        setCarEstimationConfidence(valuation.audit.confidence)
         return
       }
 
       if (assetType === 'house') {
+        if (isLookingUpHouseCep) {
+          throw new Error('Aguarde a busca do CEP da casa para continuar.')
+        }
+
         const error = propertyValidationError(houseForm, {
           includeBuiltArea: true,
           includeFloor: false,
+          requireEstimatedValue: false,
         })
 
         if (error) {
           throw new Error(error)
         }
 
+        const composedAddress = buildPropertyAddress(houseForm)
+        let estimatedValue = parsePositiveNumber(houseForm.estimatedValue)
+
+        if (Number.isNaN(estimatedValue) || estimatedValue <= 0) {
+          const valuation = await assetsService.estimatePropertyValue({
+            address: composedAddress,
+            bathrooms: parsePositiveNumber(houseForm.bathrooms),
+            bedrooms: parsePositiveNumber(houseForm.bedrooms),
+            builtArea: parsePositiveNumber(houseForm.builtArea),
+            landArea: parsePositiveNumber(houseForm.landArea),
+            ownerEmail: user.email,
+            type: 'house',
+          })
+          estimatedValue = valuation.estimatedValue
+          setHouseForm((previous) => ({
+            ...previous,
+            address: composedAddress,
+            estimatedValue: String(valuation.estimatedValue),
+          }))
+          setHouseEstimationConfidence(valuation.confidence)
+        }
+
         const isEditing = Boolean(editingAssetId)
         const savedAsset = editingAssetId
           ? await assetsService.updateAsset(user, editingAssetId, {
-              address: houseForm.address.trim(),
+              address: composedAddress,
               bathrooms: parsePositiveNumber(houseForm.bathrooms),
               bedrooms: parsePositiveNumber(houseForm.bedrooms),
               builtArea: parsePositiveNumber(houseForm.builtArea),
+              cep: normalizeCep(houseForm.cep),
+              city: houseForm.city.trim(),
+              complement: houseForm.complement.trim(),
               description: houseForm.description.trim(),
+              district: houseForm.district.trim(),
+              estimatedValue,
               landArea: parsePositiveNumber(houseForm.landArea),
+              number: houseForm.number.trim(),
               photos: houseForm.photos,
+              state: houseForm.state.trim().toUpperCase(),
+              street: houseForm.street.trim(),
               type: 'house',
             } as Omit<HouseAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
           : await assetsService.createAsset(user, {
-              address: houseForm.address.trim(),
+              address: composedAddress,
               bathrooms: parsePositiveNumber(houseForm.bathrooms),
               bedrooms: parsePositiveNumber(houseForm.bedrooms),
               builtArea: parsePositiveNumber(houseForm.builtArea),
+              cep: normalizeCep(houseForm.cep),
+              city: houseForm.city.trim(),
+              complement: houseForm.complement.trim(),
               description: houseForm.description.trim(),
+              district: houseForm.district.trim(),
+              estimatedValue,
               landArea: parsePositiveNumber(houseForm.landArea),
+              number: houseForm.number.trim(),
               photos: houseForm.photos,
+              state: houseForm.state.trim().toUpperCase(),
+              street: houseForm.street.trim(),
               type: 'house',
             } as Omit<HouseAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
 
@@ -606,6 +1860,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       }
 
       if (assetType === 'apartment') {
+        if (isLookingUpApartmentCep) {
+          throw new Error('Aguarde a busca do CEP do apartamento para continuar.')
+        }
+
         const error = propertyValidationError(apartmentForm, {
           includeBuiltArea: true,
           includeFloor: true,
@@ -615,28 +1873,45 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
           throw new Error(error)
         }
 
+        const composedAddress = buildPropertyAddress(apartmentForm)
         const isEditing = Boolean(editingAssetId)
         const savedAsset = editingAssetId
           ? await assetsService.updateAsset(user, editingAssetId, {
-              address: apartmentForm.address.trim(),
+              address: composedAddress,
               bathrooms: parsePositiveNumber(apartmentForm.bathrooms),
               bedrooms: parsePositiveNumber(apartmentForm.bedrooms),
               builtArea: parsePositiveNumber(apartmentForm.builtArea),
+              cep: normalizeCep(apartmentForm.cep),
+              city: apartmentForm.city.trim(),
+              complement: apartmentForm.complement.trim(),
               description: apartmentForm.description.trim(),
+              district: apartmentForm.district.trim(),
+              estimatedValue: parsePositiveNumber(apartmentForm.estimatedValue),
               floor: parsePositiveNumber(apartmentForm.floor),
               landArea: parsePositiveNumber(apartmentForm.landArea),
+              number: apartmentForm.number.trim(),
               photos: apartmentForm.photos,
+              state: apartmentForm.state.trim().toUpperCase(),
+              street: apartmentForm.street.trim(),
               type: 'apartment',
             } as Omit<ApartmentAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
           : await assetsService.createAsset(user, {
-              address: apartmentForm.address.trim(),
+              address: composedAddress,
               bathrooms: parsePositiveNumber(apartmentForm.bathrooms),
               bedrooms: parsePositiveNumber(apartmentForm.bedrooms),
               builtArea: parsePositiveNumber(apartmentForm.builtArea),
+              cep: normalizeCep(apartmentForm.cep),
+              city: apartmentForm.city.trim(),
+              complement: apartmentForm.complement.trim(),
               description: apartmentForm.description.trim(),
+              district: apartmentForm.district.trim(),
+              estimatedValue: parsePositiveNumber(apartmentForm.estimatedValue),
               floor: parsePositiveNumber(apartmentForm.floor),
               landArea: parsePositiveNumber(apartmentForm.landArea),
+              number: apartmentForm.number.trim(),
               photos: apartmentForm.photos,
+              state: apartmentForm.state.trim().toUpperCase(),
+              street: apartmentForm.street.trim(),
               type: 'apartment',
             } as Omit<ApartmentAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
 
@@ -652,33 +1927,73 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
         return
       }
 
+      if (isLookingUpLandCep) {
+        throw new Error('Aguarde a busca do CEP do terreno para continuar.')
+      }
+
       const landError = propertyValidationError(landForm, {
         includeBuiltArea: false,
         includeFloor: false,
+        requireEstimatedValue: false,
       })
 
       if (landError) {
         throw new Error(landError)
       }
 
+      const composedAddress = buildPropertyAddress(landForm)
+      let landEstimatedValue = parsePositiveNumber(landForm.estimatedValue)
+
+      if (Number.isNaN(landEstimatedValue) || landEstimatedValue <= 0) {
+        const valuation = await assetsService.estimatePropertyValue({
+          address: composedAddress,
+          landArea: parsePositiveNumber(landForm.landArea),
+          ownerEmail: user.email,
+          type: 'land',
+        })
+        landEstimatedValue = valuation.estimatedValue
+        setLandForm((previous) => ({
+          ...previous,
+          address: composedAddress,
+          estimatedValue: String(valuation.estimatedValue),
+        }))
+        setLandEstimationConfidence(valuation.confidence)
+      }
+
       const isEditing = Boolean(editingAssetId)
       const savedAsset = editingAssetId
         ? await assetsService.updateAsset(user, editingAssetId, {
-            address: landForm.address.trim(),
+            address: composedAddress,
             bathrooms: parsePositiveNumber(landForm.bathrooms),
             bedrooms: parsePositiveNumber(landForm.bedrooms),
+            cep: normalizeCep(landForm.cep),
+            city: landForm.city.trim(),
+            complement: landForm.complement.trim(),
             description: landForm.description.trim(),
+            district: landForm.district.trim(),
+            estimatedValue: landEstimatedValue,
             landArea: parsePositiveNumber(landForm.landArea),
+            number: landForm.number.trim(),
             photos: landForm.photos,
+            state: landForm.state.trim().toUpperCase(),
+            street: landForm.street.trim(),
             type: 'land',
           } as Omit<LandAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
         : await assetsService.createAsset(user, {
-            address: landForm.address.trim(),
+            address: composedAddress,
             bathrooms: parsePositiveNumber(landForm.bathrooms),
             bedrooms: parsePositiveNumber(landForm.bedrooms),
+            cep: normalizeCep(landForm.cep),
+            city: landForm.city.trim(),
+            complement: landForm.complement.trim(),
             description: landForm.description.trim(),
+            district: landForm.district.trim(),
+            estimatedValue: landEstimatedValue,
             landArea: parsePositiveNumber(landForm.landArea),
+            number: landForm.number.trim(),
             photos: landForm.photos,
+            state: landForm.state.trim().toUpperCase(),
+            street: landForm.street.trim(),
             type: 'land',
           } as Omit<LandAsset, 'createdAt' | 'id' | 'ownerEmail' | 'ownerName'>)
 
@@ -794,54 +2109,108 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                           <label htmlFor="car-brand">Marca</label>
                           <input
                             id="car-brand"
+                            list="car-brand-options"
                             onChange={(event) => {
                               clearFeedback()
+                              const nextBrand = event.target.value
+                              const matchedBrand = findOptionByName(carBrands, nextBrand)
                               setCarForm((previous) => ({
                                 ...previous,
-                                brand: event.target.value,
+                                brand: nextBrand,
+                                brandCode: matchedBrand?.code ?? '',
+                                model: '',
+                                modelCode: '',
+                                year: '',
+                                yearCode: '',
                               }))
                             }}
                             placeholder="Ex: Toyota"
                             type="text"
                             value={carForm.brand}
                           />
+                          <datalist id="car-brand-options">
+                            {carBrands.map((brand) => (
+                              <option key={brand.code} value={brand.name} />
+                            ))}
+                          </datalist>
+                          {isLoadingCarCatalog ? (
+                            <small>Carregando marcas FIPE...</small>
+                          ) : null}
                         </div>
 
                         <div>
                           <label htmlFor="car-model">Modelo</label>
                           <input
                             id="car-model"
+                            list="car-model-options"
+                            disabled={!carForm.brandCode}
                             onChange={(event) => {
                               clearFeedback()
+                              const nextModel = event.target.value
+                              const matchedModel = findOptionByName(carModels, nextModel)
                               setCarForm((previous) => ({
                                 ...previous,
-                                model: event.target.value,
+                                model: nextModel,
+                                modelCode: matchedModel?.code ?? '',
+                                year: '',
+                                yearCode: '',
                               }))
                             }}
-                            placeholder="Ex: Corolla"
+                            placeholder={
+                              carForm.brandCode
+                                ? 'Ex: Corolla XEi'
+                                : 'Selecione a marca primeiro'
+                            }
                             type="text"
                             value={carForm.model}
                           />
+                          <datalist id="car-model-options">
+                            {carModels.map((model) => (
+                              <option key={model.code} value={model.name} />
+                            ))}
+                          </datalist>
+                          {isLoadingCarModels ? (
+                            <small>Carregando modelos FIPE...</small>
+                          ) : null}
                         </div>
                       </div>
 
                       <div className="assets-grid-two">
                         <div>
-                          <label htmlFor="car-year">Ano</label>
-                          <input
-                            id="car-year"
-                            inputMode="numeric"
+                          <label htmlFor="car-version">
+                            Versão FIPE (ano/combustível)
+                          </label>
+                          <select
+                            id="car-version"
+                            disabled={!carForm.modelCode}
                             onChange={(event) => {
                               clearFeedback()
+                              const selectedYearCode = event.target.value
+                              const selectedYear = selectedYearCode
+                                ? selectedYearCode.split('-')[0]
+                                : ''
                               setCarForm((previous) => ({
                                 ...previous,
-                                year: event.target.value,
+                                year: selectedYear,
+                                yearCode: selectedYearCode,
                               }))
                             }}
-                            placeholder="Ex: 2020"
-                            type="text"
-                            value={carForm.year}
-                          />
+                            value={carForm.yearCode}
+                          >
+                            <option value="">
+                              {carForm.modelCode
+                                ? 'Selecione uma versão'
+                                : 'Selecione o modelo primeiro'}
+                            </option>
+                            {carYearOptions.map((yearOption) => (
+                              <option key={yearOption.code} value={yearOption.code}>
+                                {yearOption.name}
+                              </option>
+                            ))}
+                          </select>
+                          {isLoadingCarYears ? (
+                            <small>Carregando versões FIPE...</small>
+                          ) : null}
                         </div>
 
                         <div>
@@ -863,6 +2232,95 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         </div>
                       </div>
 
+                      <div className="assets-grid-two">
+                        <div>
+                          <label htmlFor="car-cep">CEP do carro</label>
+                          <input
+                            id="car-cep"
+                            inputMode="numeric"
+                            maxLength={9}
+                            onChange={(event) => {
+                              clearFeedback()
+                              setCarCepError(null)
+                              const cep = normalizeCep(event.target.value)
+                              setCarForm((previous) => ({
+                                ...previous,
+                                cep,
+                                city: '',
+                                state: '',
+                              }))
+                            }}
+                            placeholder="Ex: 01310-930"
+                            type="text"
+                            value={formatCep(carForm.cep)}
+                          />
+                          {isLookingUpCarCep ? (
+                            <small>Buscando cidade/UF pelo CEP...</small>
+                          ) : null}
+                          {carCepError ? (
+                            <small className="assets-feedback error">{carCepError}</small>
+                          ) : null}
+                        </div>
+
+                        <div>
+                          <label htmlFor="car-region">Cidade/UF</label>
+                          <input
+                            id="car-region"
+                            placeholder="Preenchido automaticamente via CEP"
+                            readOnly
+                            type="text"
+                            value={
+                              carForm.city.trim() && carForm.state.trim()
+                                ? `${carForm.city.trim()}/${carForm.state.trim().toUpperCase()}`
+                                : ''
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <label htmlFor="car-description">Observações do carro</label>
+                      <textarea
+                        id="car-description"
+                        onChange={(event) => {
+                          clearFeedback()
+                          setCarForm((previous) => ({
+                            ...previous,
+                            description: event.target.value,
+                          }))
+                        }}
+                        placeholder="Ex: revisões em dia, pneus novos, único dono..."
+                        rows={3}
+                        value={carForm.description}
+                      />
+                      {carCatalogError ? (
+                        <small className="assets-feedback error">{carCatalogError}</small>
+                      ) : null}
+
+                      <label htmlFor="car-estimated-value">
+                        Valor estimado por IA (R$)
+                      </label>
+                      <input
+                        id="car-estimated-value"
+                        inputMode="decimal"
+                        placeholder="Calculado automaticamente"
+                        readOnly
+                        type="text"
+                        value={carForm.estimatedValue}
+                      />
+                      <small>
+                        {isEstimatingCarValue
+                          ? 'Calculando valor estimado por IA...'
+                          : 'O valor será calculado automaticamente via FIPE com ajustes por km, ano e região.'}
+                      </small>
+                      {carEstimationConfidence !== null ? (
+                        <small>
+                          Nivel de confianca: {Math.round(carEstimationConfidence * 100)}%
+                        </small>
+                      ) : null}
+                      {carEstimationError ? (
+                        <small className="assets-feedback error">{carEstimationError}</small>
+                      ) : null}
+
                       <PhotoUploader
                         inputId="car-photos"
                         photos={carForm.photos}
@@ -879,8 +2337,16 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   {assetType === 'house' ? (
                     <>
                       <PropertyFields
+                        cepError={houseCepError}
                         form={houseForm}
+                        estimatedConfidence={houseEstimationConfidence}
+                        estimatedError={houseEstimationError}
+                        estimatedHint="O valor será calculado automaticamente com base pública (FipeZAP) e ajustes por área, cômodos e região."
+                        estimatedLabel="Valor estimado por IA (R$)"
+                        estimatedReadOnly
                         includeBuiltArea
+                        isLookingUpCep={isLookingUpHouseCep}
+                        isEstimatingValue={isEstimatingHouseValue}
                         onFieldChange={(field, value) => {
                           updatePropertyForm('house', field, value)
                         }}
@@ -901,9 +2367,11 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   {assetType === 'apartment' ? (
                     <>
                       <PropertyFields
+                        cepError={apartmentCepError}
                         form={apartmentForm}
                         includeBuiltArea
                         includeFloor
+                        isLookingUpCep={isLookingUpApartmentCep}
                         onFieldChange={(field, value) => {
                           updatePropertyForm('apartment', field, value)
                         }}
@@ -924,7 +2392,15 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   {assetType === 'land' ? (
                     <>
                       <PropertyFields
+                        cepError={landCepError}
                         form={landForm}
+                        estimatedConfidence={landEstimationConfidence}
+                        estimatedError={landEstimationError}
+                        estimatedHint="O valor será calculado automaticamente com base pública (FipeZAP) e ajustes por metragem e região."
+                        estimatedLabel="Valor estimado por IA (R$)"
+                        estimatedReadOnly
+                        isLookingUpCep={isLookingUpLandCep}
+                        isEstimatingValue={isEstimatingLandValue}
                         onFieldChange={(field, value) => {
                           updatePropertyForm('land', field, value)
                         }}
@@ -957,7 +2433,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         onClick={cancelEditingAsset}
                         type="button"
                       >
-                        Cancelar edicao
+                        Cancelar edição
                       </button>
                     ) : null}
                   </div>
@@ -972,8 +2448,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 
                 {assets.length === 0 ? (
                   <p className="assets-empty">
-                    Nenhum ativo cadastrado ainda. Preencha o formulario ao lado para
-                    comecar.
+                    Nenhum ativo cadastrado ainda. Preencha o formulário ao lado para
+                    começar.
                   </p>
                 ) : (
                   <div className="assets-list">
@@ -1003,19 +2479,40 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                           {asset.type === 'car' ? (
                             <>
                               <li>Marca: {asset.brand}</li>
-                              <li>Modelo: {asset.model}</li>
+                              <li>Modelo: {asset.model || 'Nao informado'}</li>
                               <li>Ano: {asset.year}</li>
+                              <li>
+                                Cidade/UF: {(asset.city || 'Nao informado')}/{(asset.state || '--')}
+                              </li>
+                              <li>CEP: {asset.cep ? formatCep(asset.cep) : 'Nao informado'}</li>
                               <li>Km: {formatNumber(asset.mileage)}</li>
+                              <li>Valor estimado: {formatCurrency(asset.estimatedValue)}</li>
+                              {asset.description ? (
+                                <li>Observações: {asset.description}</li>
+                              ) : null}
+                              {asset.estimatedValueAudit ? (
+                                <>
+                                  <li>Fonte: {asset.estimatedValueAudit.source}</li>
+                                  <li>
+                                    Cotacao: {formatDateTime(asset.estimatedValueAudit.quotedAt)}
+                                  </li>
+                                  <li>
+                                    Confianca:{' '}
+                                    {Math.round(asset.estimatedValueAudit.confidence * 100)}%
+                                  </li>
+                                </>
+                              ) : null}
                             </>
                           ) : null}
 
                           {asset.type !== 'car' ? (
                             <>
-                              <li>Endereco: {asset.address}</li>
+                              <li>Endereço: {asset.address}</li>
+                              <li>Valor estimado: {formatCurrency(asset.estimatedValue)}</li>
                               <li>Terreno: {formatNumber(asset.landArea)} m²</li>
                               {asset.type !== 'land' ? (
                                 <li>
-                                  Area construida: {formatNumber(asset.builtArea)} m²
+                                  Área construída: {formatNumber(asset.builtArea)} m²
                                 </li>
                               ) : null}
                               <li>Banheiros: {formatNumber(asset.bathrooms)}</li>
@@ -1024,7 +2521,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                                 <li>Andar: {formatNumber(asset.floor)}</li>
                               ) : null}
                               {asset.description ? (
-                                <li>Descricao: {asset.description}</li>
+                                <li>Descrição: {asset.description}</li>
                               ) : null}
                             </>
                           ) : null}
@@ -1050,13 +2547,13 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                 <article className="tinder-card-shell">
                 <div className="tinder-header">
                   <p>Tinder de ativos</p>
-                  <h2>Escolha o que voce trocaria e avance no match</h2>
+                  <h2>Escolha o que você trocaria e avance no match</h2>
                 </div>
 
                 {assets.length === 0 ? (
                   <div className="tinder-empty">
                     <p>
-                      Voce precisa cadastrar ao menos um ativo para comecar o Tinder.
+                      Você precisa cadastrar ao menos um ativo para começar o Tinder.
                     </p>
                     <button
                       type="button"
@@ -1069,7 +2566,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   </div>
                 ) : (
                   <>
-                    <label htmlFor="tinder-own-asset">Ativo que voce quer trocar</label>
+                    <label htmlFor="tinder-own-asset">Ativo que você quer trocar</label>
                     <select
                       id="tinder-own-asset"
                       value={selectedOwnAssetId}
@@ -1116,7 +2613,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                           />
                           <TinderAssetCard
                             asset={currentCandidate}
-                            badge="Possivel troca"
+                            badge="Possível troca"
                             ownerLabel={currentCandidate.ownerName}
                           />
                         </div>
@@ -1144,7 +2641,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                       </>
                     ) : (
                       <div className="tinder-empty">
-                        <p>Voce avaliou todos os ativos disponiveis para essa pilha.</p>
+                        <p>Você avaliou todos os ativos disponíveis para essa pilha.</p>
                       </div>
                     )}
 
@@ -1153,7 +2650,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                       onClick={handleResetSwipeStack}
                       type="button"
                     >
-                      Reiniciar avaliacao desse ativo
+                      Reiniciar avaliação desse ativo
                     </button>
                   </>
                 )}
@@ -1198,22 +2695,46 @@ function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
             </li>
             <li>
               <span>Modelo</span>
-              <strong>{asset.model}</strong>
+              <strong>{asset.model || 'Nao informado'}</strong>
             </li>
             <li>
               <span>Ano</span>
               <strong>{asset.year}</strong>
             </li>
             <li>
+              <span>Cidade/UF</span>
+              <strong>
+                {(asset.city || 'Nao informado')}/{(asset.state || '--')}
+              </strong>
+            </li>
+            <li>
+              <span>CEP</span>
+              <strong>{asset.cep ? formatCep(asset.cep) : 'Nao informado'}</strong>
+            </li>
+            <li>
               <span>Km</span>
               <strong>{formatNumber(asset.mileage)}</strong>
             </li>
+            <li>
+              <span>Valor estimado</span>
+              <strong>{formatCurrency(asset.estimatedValue)}</strong>
+            </li>
+            {asset.description ? (
+              <li>
+                <span>Observações</span>
+                <strong>{asset.description}</strong>
+              </li>
+            ) : null}
           </>
         ) : (
           <>
             <li>
-              <span>Endereco</span>
+              <span>Endereço</span>
               <strong>{asset.address}</strong>
+            </li>
+            <li>
+              <span>Valor estimado</span>
+              <strong>{formatCurrency(asset.estimatedValue)}</strong>
             </li>
             <li>
               <span>Terreno</span>
@@ -1221,7 +2742,7 @@ function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
             </li>
             {asset.type !== 'land' ? (
               <li>
-                <span>Area construida</span>
+                <span>Área construída</span>
                 <strong>{formatNumber(asset.builtArea)} m²</strong>
               </li>
             ) : null}
@@ -1247,30 +2768,136 @@ function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
 }
 
 interface PropertyFieldsProps {
+  cepError?: string | null
+  estimatedConfidence?: number | null
+  estimatedError?: string | null
+  estimatedHint?: string
+  estimatedLabel?: string
+  estimatedReadOnly?: boolean
   form: PropertyAssetForm
   includeBuiltArea?: boolean
   includeFloor?: boolean
+  isLookingUpCep?: boolean
+  isEstimatingValue?: boolean
   onFieldChange: (field: keyof PropertyAssetForm, value: string) => void
 }
 
 function PropertyFields({
+  cepError = null,
+  estimatedConfidence = null,
+  estimatedError = null,
+  estimatedHint = '',
+  estimatedLabel = 'Valor estimado (R$)',
+  estimatedReadOnly = false,
   form,
   includeBuiltArea = false,
   includeFloor = false,
+  isLookingUpCep = false,
+  isEstimatingValue = false,
   onFieldChange,
 }: PropertyFieldsProps) {
   return (
     <>
-      <label htmlFor="property-address">Endereco do imovel</label>
+      <label htmlFor="property-cep">CEP do imóvel</label>
       <input
-        id="property-address"
+        id="property-cep"
+        inputMode="numeric"
         onChange={(event) => {
-          onFieldChange('address', event.target.value)
+          onFieldChange('cep', normalizeCep(event.target.value))
         }}
-        placeholder="Rua, numero, bairro, cidade"
+        placeholder="Ex: 01310-930"
         type="text"
-        value={form.address}
+        value={formatCep(form.cep)}
       />
+      <small>
+        {isLookingUpCep
+          ? 'Buscando endereço pelo CEP...'
+          : 'Rua, bairro, cidade e UF são preenchidos automaticamente pelo CEP.'}
+      </small>
+      {cepError ? <small className="assets-feedback error">{cepError}</small> : null}
+
+      <div className="assets-grid-two">
+        <div>
+          <label htmlFor="property-street">Rua</label>
+          <input id="property-street" readOnly type="text" value={form.street} />
+        </div>
+        <div>
+          <label htmlFor="property-district">Bairro</label>
+          <input id="property-district" readOnly type="text" value={form.district} />
+        </div>
+      </div>
+
+      <div className="assets-grid-two">
+        <div>
+          <label htmlFor="property-city">Cidade</label>
+          <input id="property-city" readOnly type="text" value={form.city} />
+        </div>
+        <div>
+          <label htmlFor="property-state">UF</label>
+          <input id="property-state" readOnly type="text" value={form.state} />
+        </div>
+      </div>
+
+      <div className="assets-grid-two">
+        <div>
+          <label htmlFor="property-number">Número</label>
+          <input
+            id="property-number"
+            onChange={(event) => {
+              onFieldChange('number', event.target.value)
+            }}
+            placeholder="Ex: 250"
+            type="text"
+            value={form.number}
+          />
+        </div>
+        <div>
+          <label htmlFor="property-complement">Complemento</label>
+          <input
+            id="property-complement"
+            onChange={(event) => {
+              onFieldChange('complement', event.target.value)
+            }}
+            placeholder="Ex: Bloco A, apto 21"
+            type="text"
+            value={form.complement}
+          />
+        </div>
+      </div>
+
+      {form.address ? (
+        <small className="assets-address-preview">Endereço montado: {form.address}</small>
+      ) : null}
+
+      <label htmlFor="property-estimated-value">{estimatedLabel}</label>
+      <input
+        id="property-estimated-value"
+        inputMode="decimal"
+        onChange={(event) => {
+          if (!estimatedReadOnly) {
+            onFieldChange('estimatedValue', event.target.value)
+          }
+        }}
+        placeholder={estimatedReadOnly ? 'Calculado automaticamente' : 'Ex: 450000'}
+        readOnly={estimatedReadOnly}
+        type="text"
+        value={form.estimatedValue}
+      />
+      {estimatedReadOnly ? (
+        <>
+          <small>
+            {isEstimatingValue
+              ? 'Calculando valor estimado por IA...'
+              : estimatedHint || 'O valor será calculado automaticamente por IA.'}
+          </small>
+          {estimatedConfidence !== null ? (
+            <small>Nível de confiança: {Math.round(estimatedConfidence * 100)}%</small>
+          ) : null}
+          {estimatedError ? (
+            <small className="assets-feedback error">{estimatedError}</small>
+          ) : null}
+        </>
+      ) : null}
 
       <div className="assets-grid-two">
         <div>
@@ -1289,7 +2916,7 @@ function PropertyFields({
 
         {includeBuiltArea ? (
           <div>
-            <label htmlFor="property-built-area">Area construida (m²)</label>
+            <label htmlFor="property-built-area">Área construída (m²)</label>
             <input
               id="property-built-area"
               inputMode="decimal"
@@ -1350,7 +2977,7 @@ function PropertyFields({
         </>
       ) : null}
 
-      <label htmlFor="property-description">Descricao</label>
+      <label htmlFor="property-description">Descrição</label>
       <textarea
         id="property-description"
         onChange={(event) => {
@@ -1387,7 +3014,7 @@ function PhotoUploader({
         onChange={onPhotoSelect}
         type="file"
       />
-      <small>Voce pode enviar ate 8 fotos por ativo (max. 5MB cada).</small>
+      <small>Você pode enviar até 8 fotos por ativo (máx. 5MB cada).</small>
 
       {photos.length > 0 ? (
         <div className="assets-photo-grid">
@@ -1409,6 +3036,10 @@ function PhotoUploader({
     </div>
   )
 }
+
+
+
+
 
 
 

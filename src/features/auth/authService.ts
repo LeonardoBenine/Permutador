@@ -1,4 +1,4 @@
-﻿import type { AddressData, LoginCredentials, RegisterPayload } from './types'
+import type { AddressData, LoginCredentials, RegisterPayload } from './types'
 
 interface StoredAccount {
   address: AddressData
@@ -19,11 +19,11 @@ const seedAccounts: StoredAccount[] = [
   {
     address: {
       cep: '01001000',
-      city: 'Sao Paulo',
+      city: 'São Paulo',
       complement: '',
       number: '100',
       state: 'SP',
-      street: 'Praca da Se',
+      street: 'Praça da Sé',
     },
     createdAt: new Date().toISOString(),
     email: DEMO_EMAIL,
@@ -71,7 +71,7 @@ function normalizeStoredAccount(account: unknown): StoredAccount {
     confirmationEmailSentAt: value.confirmationEmailSentAt,
     createdAt: value.createdAt ?? new Date().toISOString(),
     email: normalizedEmail === LEGACY_DEMO_EMAIL ? DEMO_EMAIL : normalizedEmail,
-    name: value.name?.trim() || 'Usuario',
+    name: value.name?.trim() || 'Usuário',
     password: value.password,
     provider: value.provider === 'google' ? 'google' : 'email',
   }
@@ -129,7 +129,7 @@ async function sendConfirmationEmail(name: string, email: string) {
     })
 
     if (!response.ok) {
-      throw new Error('Nao foi possivel enviar o e-mail de confirmacao.')
+      throw new Error('Não foi possível enviar o e-mail de confirmação.')
     }
 
     const sentAt = new Date().toISOString()
@@ -161,12 +161,12 @@ export const authService = {
     const account = accounts.find((item) => normalizeEmail(item.email) === email)
 
     if (!account) {
-      throw new Error('Nao encontramos uma conta com esse e-mail.')
+      throw new Error('Não encontramos uma conta com esse e-mail.')
     }
 
     if (!account.password) {
       throw new Error(
-        'Sua conta ainda nao possui senha. Clique em "Esqueci minha senha" para definir.',
+        'Sua conta ainda não possui senha. Clique em "Esqueci minha senha" para definir.',
       )
     }
 
@@ -188,7 +188,7 @@ export const authService = {
     const hasEmail = accounts.some((item) => normalizeEmail(item.email) === email)
 
     if (hasEmail) {
-      throw new Error('Esse e-mail ja possui cadastro.')
+      throw new Error('Esse e-mail já possui cadastro.')
     }
 
     const confirmation = await sendConfirmationEmail(payload.name.trim(), email)
@@ -248,7 +248,7 @@ export const authService = {
 
     return {
       email: 'google.user@permutador.com.br',
-      name: 'Usuario Google',
+      name: 'Usuário Google',
       provider: 'Google',
     }
   },

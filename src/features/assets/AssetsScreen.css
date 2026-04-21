@@ -248,6 +248,7 @@
 }
 
 .assets-form input,
+.assets-form select,
 .assets-form textarea {
   width: 100%;
   min-width: 0;
@@ -267,9 +268,27 @@
 }
 
 .assets-form input:focus,
+.assets-form select:focus,
 .assets-form textarea:focus {
   border-color: rgba(242, 107, 37, 0.72);
   box-shadow: 0 0 0 4px rgba(242, 107, 37, 0.18);
+}
+
+.assets-form select:disabled {
+  color: var(--muted);
+  background: rgba(148, 163, 184, 0.08);
+  cursor: not-allowed;
+}
+
+.assets-form input[readonly] {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text);
+}
+
+.assets-address-preview {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: -2px;
 }
 
 .assets-grid-two {

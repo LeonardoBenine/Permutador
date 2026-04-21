@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import brandLogo from '../../assets/logo-permutador-oficial.png'
 import { authService } from './authService'
@@ -27,12 +27,12 @@ const modeContent: Record<AuthMode, { title: string; subtitle: string }> = {
   },
   login: {
     subtitle:
-      'Entre na sua conta para continuar negociando ativos com seguranca.',
+      'Entre na sua conta para continuar negociando ativos com segurança.',
     title: 'Bem-vindo de volta',
   },
   register: {
     subtitle:
-      'Crie sua conta com senha, endereco completo e confirmacao por e-mail.',
+      'Crie sua conta com senha, endereço completo e confirmação por e-mail.',
     title: 'Crie sua conta',
   },
 }
@@ -108,7 +108,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     if (!isValidCep(cep)) {
       if (!options?.silent) {
         setFeedback({
-          text: 'Digite um CEP valido com 8 numeros para buscar endereco.',
+          text: 'Digite um CEP válido com 8 números para buscar endereço.',
           tone: 'error',
         })
       }
@@ -132,7 +132,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
       if (!options?.silent) {
         setFeedback({
-          text: 'Endereco carregado a partir do CEP.',
+          text: 'Endereço carregado a partir do CEP.',
           tone: 'info',
         })
       }
@@ -153,7 +153,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(loginForm.email)) {
       setFeedback({
-        text: 'Digite um e-mail valido para entrar.',
+        text: 'Digite um e-mail válido para entrar.',
         tone: 'error',
       })
       return
@@ -175,7 +175,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const result = await authService.login(loginForm)
 
       setFeedback({
-        text: `Login realizado com sucesso. Ola, ${result.name}!`,
+        text: `Login realizado com sucesso. Olá, ${result.name}!`,
         tone: 'success',
       })
       onAuthenticated?.({ email: result.email, name: result.name })
@@ -202,7 +202,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(registerForm.email)) {
       setFeedback({
-        text: 'Digite um e-mail valido para criar conta.',
+        text: 'Digite um e-mail válido para criar conta.',
         tone: 'error',
       })
       return
@@ -220,7 +220,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (registerForm.password !== registerForm.confirmPassword) {
       setFeedback({
-        text: 'As senhas nao conferem. Digite novamente.',
+        text: 'As senhas não conferem. Digite novamente.',
         tone: 'error',
       })
       return
@@ -228,7 +228,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidCep(registerForm.address.cep)) {
       setFeedback({
-        text: 'Digite um CEP valido com 8 numeros.',
+        text: 'Digite um CEP válido com 8 números.',
         tone: 'error',
       })
       return
@@ -236,7 +236,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!registerForm.address.street.trim()) {
       setFeedback({
-        text: 'Preencha o endereco (rua/avenida).',
+        text: 'Preencha o endereço (rua/avenida).',
         tone: 'error',
       })
       return
@@ -244,7 +244,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!registerForm.address.number.trim()) {
       setFeedback({
-        text: 'Preencha o numero do endereco.',
+        text: 'Preencha o número do endereço.',
         tone: 'error',
       })
       return
@@ -291,7 +291,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       setRegisterForm(initialRegisterForm)
       changeMode('login')
       setFeedback({
-        text: `Conta criada para ${result.name}. Enviamos e-mail de confirmacao para ${result.email}.`,
+        text: `Conta criada para ${result.name}. Enviamos e-mail de confirmação para ${result.email}.`,
         tone: 'success',
       })
     } catch (error) {
@@ -309,7 +309,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(forgotEmail)) {
       setFeedback({
-        text: 'Digite um e-mail valido para recuperar a senha.',
+        text: 'Digite um e-mail válido para recuperar a senha.',
         tone: 'error',
       })
       return
@@ -328,7 +328,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
       changeMode('login')
       setFeedback({
-        text: `Enviamos a redefinicao para ${forgotEmail}. Em ambiente local, use senha temporaria ${result.temporaryPassword}.`,
+        text: `Enviamos a redefinição para ${forgotEmail}. Em ambiente local, use senha temporária ${result.temporaryPassword}.`,
         tone: 'info',
       })
       setForgotEmail('')
@@ -345,7 +345,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const provider = await authService.signInWithGoogle()
 
       setFeedback({
-        text: `Conexao com ${provider.provider} iniciada com sucesso.`,
+        text: `Conexão com ${provider.provider} iniciada com sucesso.`,
         tone: 'success',
       })
       onAuthenticated?.({ email: provider.email, name: provider.name })
@@ -365,21 +365,21 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             <img className="auth-brand-logo" src={brandLogo} alt="Logo Permutador" />
           </div>
 
-          <h2>Trocas inteligentes para quem quer agilidade e confianca</h2>
+          <h2>Trocas inteligentes para quem quer agilidade e confiança</h2>
           <p>
             Acesse, negocie e acompanhe oportunidades de permuta com uma
-            experiencia moderna e intuitiva.
+            experiência moderna e intuitiva.
           </p>
 
           <ul>
             <li>Login por e-mail e senha</li>
-            <li>Recuperacao de senha por e-mail</li>
-            <li>Cadastro com CEP e confirmacao de senha</li>
-            <li>E-mail de confirmacao apos criar conta</li>
+            <li>Recuperação de senha por e-mail</li>
+            <li>Cadastro com CEP e confirmação de senha</li>
+            <li>E-mail de confirmação após criar conta</li>
           </ul>
 
           <div className="auth-demo-box">
-            <span>Conta de demonstracao</span>
+            <span>Conta de demonstração</span>
             <strong>demo@permutador.com.br</strong>
             <small>Senha: 123456</small>
           </div>
@@ -387,7 +387,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         <section className="auth-card" aria-live="polite">
           <header>
-            <p className="auth-card-eyebrow">Autenticacao</p>
+            <p className="auth-card-eyebrow">Autenticação</p>
             <h1>{activeMode.title}</h1>
             <p>{activeMode.subtitle}</p>
           </header>
@@ -427,7 +427,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                     email: event.target.value,
                   }))
                 }
-                placeholder="voce@empresa.com"
+                placeholder="você@empresa.com"
                 type="email"
                 value={loginForm.email}
               />
@@ -491,7 +491,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                     email: event.target.value,
                   }))
                 }
-                placeholder="voce@empresa.com"
+                placeholder="você@empresa.com"
                 type="email"
                 value={registerForm.email}
               />
@@ -563,7 +563,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 </button>
               </div>
 
-              <label htmlFor="register-street">Endereco</label>
+              <label htmlFor="register-street">Endereço</label>
               <input
                 autoComplete="street-address"
                 id="register-street"
@@ -577,7 +577,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
               <div className="auth-form-row">
                 <div>
-                  <label htmlFor="register-number">Numero</label>
+                  <label htmlFor="register-number">Número</label>
                   <input
                     autoComplete="off"
                     id="register-number"
@@ -649,13 +649,13 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 autoComplete="email"
                 id="forgot-email"
                 onChange={(event) => setForgotEmail(event.target.value)}
-                placeholder="voce@empresa.com"
+                placeholder="você@empresa.com"
                 type="email"
                 value={forgotEmail}
               />
 
               <button className="auth-primary" disabled={isSubmitting} type="submit">
-                {isSubmitting ? 'Enviando...' : 'Enviar e-mail de redefinicao'}
+                {isSubmitting ? 'Enviando...' : 'Enviar e-mail de redefinição'}
               </button>
 
               <button

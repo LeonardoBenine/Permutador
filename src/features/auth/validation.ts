@@ -1,4 +1,4 @@
-﻿const EMAIL_PATTERN = /^[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+$/
+const EMAIL_PATTERN = /^[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+$/
 const CEP_PATTERN = /^\d{8}$/
 
 export function isValidEmail(value: string): boolean {
@@ -11,7 +11,7 @@ export function passwordError(value: string): string | null {
   }
 
   if (value.length < 6) {
-    return 'A senha precisa ter no minimo 6 caracteres.'
+    return 'A senha precisa ter no mínimo 6 caracteres.'
   }
 
   return null
