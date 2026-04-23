@@ -9,7 +9,12 @@ export interface EstimatedValueAudit {
   }
   baseValue: number
   confidence: number
-  method: 'fipe_api_v2_adjusted' | 'manual_fallback'
+  memory?: string[]
+  method:
+    | 'fipe_api_v2_adjusted'
+    | 'manual_fallback'
+    | 'property_public_base_adjusted'
+    | 'property_market_comparables'
   quotedAt: string
   region: string
   source: string

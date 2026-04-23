@@ -10,20 +10,10 @@ export interface LoginCredentials {
   password: string
 }
 
-export interface AddressData {
-  cep: string
-  street: string
-  number: string
-  complement: string
-  city: string
-  state: string
-}
-
 export interface RegisterPayload {
   name: string
   email: string
   password: string
-  address: AddressData
 }
 
 export interface RegisterFormData extends RegisterPayload {

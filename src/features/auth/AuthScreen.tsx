@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import brandLogo from '../../assets/logo-permutador-oficial.png'
 import { authService } from './authService'
-import { lookupAddressByCep } from './cepService'
 import type {
   AuthMode,
   AuthUser,
@@ -10,13 +9,7 @@ import type {
   LoginCredentials,
   RegisterFormData,
 } from './types'
-import {
-  isValidCep,
-  isValidEmail,
-  normalizeCep,
-  passwordError,
-  stateError,
-} from './validation'
+import { isValidEmail, passwordError } from './validation'
 import './AuthScreen.css'
 
 const modeContent: Record<AuthMode, { title: string; subtitle: string }> = {
@@ -32,7 +25,7 @@ const modeContent: Record<AuthMode, { title: string; subtitle: string }> = {
   },
   register: {
     subtitle:
-      'Crie sua conta com senha, endereço completo e confirmação por e-mail.',
+      'Crie sua conta com senha e confirmação por e-mail.',
     title: 'Crie sua conta',
   },
 }
@@ -43,28 +36,10 @@ const initialLoginForm: LoginCredentials = {
 }
 
 const initialRegisterForm: RegisterFormData = {
-  address: {
-    cep: '',
-    city: '',
-    complement: '',
-    number: '',
-    state: '',
-    street: '',
-  },
   confirmPassword: '',
   email: '',
   name: '',
   password: '',
-}
-
-function formatCep(value: string): string {
-  const sanitized = normalizeCep(value)
-
-  if (sanitized.length <= 5) {
-    return sanitized
-  }
-
-  return `${sanitized.slice(0, 5)}-${sanitized.slice(5)}`
 }
 
 interface AuthScreenProps {
@@ -74,7 +49,6 @@ interface AuthScreenProps {
 export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>('login')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isCepLoading, setIsCepLoading] = useState(false)
   const [feedback, setFeedback] = useState<FeedbackMessage | null>(null)
   const [loginForm, setLoginForm] = useState<LoginCredentials>(initialLoginForm)
   const [registerForm, setRegisterForm] = useState<RegisterFormData>(
@@ -87,65 +61,6 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   function changeMode(nextMode: AuthMode) {
     setMode(nextMode)
     setFeedback(null)
-  }
-
-  function updateAddressField(
-    field: keyof RegisterFormData['address'],
-    value: string,
-  ) {
-    setRegisterForm((previous) => ({
-      ...previous,
-      address: {
-        ...previous.address,
-        [field]: value,
-      },
-    }))
-  }
-
-  async function handleCepLookup(options?: { silent?: boolean }) {
-    const cep = normalizeCep(registerForm.address.cep)
-
-    if (!isValidCep(cep)) {
-      if (!options?.silent) {
-        setFeedback({
-          text: 'Digite um CEP válido com 8 números para buscar endereço.',
-          tone: 'error',
-        })
-      }
-      return
-    }
-
-    try {
-      setIsCepLoading(true)
-      const cepResult = await lookupAddressByCep(cep)
-
-      setRegisterForm((previous) => ({
-        ...previous,
-        address: {
-          ...previous.address,
-          cep,
-          city: cepResult.city || previous.address.city,
-          state: (cepResult.state || previous.address.state).toUpperCase(),
-          street: cepResult.street || previous.address.street,
-        },
-      }))
-
-      if (!options?.silent) {
-        setFeedback({
-          text: 'Endereço carregado a partir do CEP.',
-          tone: 'info',
-        })
-      }
-    } catch (error) {
-      if (!options?.silent) {
-        setFeedback({
-          text: (error as Error).message,
-          tone: 'error',
-        })
-      }
-    } finally {
-      setIsCepLoading(false)
-    }
   }
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
@@ -226,58 +141,11 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       return
     }
 
-    if (!isValidCep(registerForm.address.cep)) {
-      setFeedback({
-        text: 'Digite um CEP válido com 8 números.',
-        tone: 'error',
-      })
-      return
-    }
-
-    if (!registerForm.address.street.trim()) {
-      setFeedback({
-        text: 'Preencha o endereço (rua/avenida).',
-        tone: 'error',
-      })
-      return
-    }
-
-    if (!registerForm.address.number.trim()) {
-      setFeedback({
-        text: 'Preencha o número do endereço.',
-        tone: 'error',
-      })
-      return
-    }
-
-    if (!registerForm.address.city.trim()) {
-      setFeedback({
-        text: 'Preencha a cidade.',
-        tone: 'error',
-      })
-      return
-    }
-
-    const invalidState = stateError(registerForm.address.state)
-
-    if (invalidState) {
-      setFeedback({
-        text: invalidState,
-        tone: 'error',
-      })
-      return
-    }
-
     try {
       setIsSubmitting(true)
       setFeedback(null)
 
       const result = await authService.register({
-        address: {
-          ...registerForm.address,
-          cep: normalizeCep(registerForm.address.cep),
-          state: registerForm.address.state.toUpperCase(),
-        },
         email: registerForm.email,
         name: registerForm.name,
         password: registerForm.password,
@@ -374,7 +242,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           <ul>
             <li>Login por e-mail e senha</li>
             <li>Recuperação de senha por e-mail</li>
-            <li>Cadastro com CEP e confirmação de senha</li>
+            <li>Cadastro com confirmação de senha</li>
             <li>E-mail de confirmação após criar conta</li>
           </ul>
 
@@ -427,7 +295,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                     email: event.target.value,
                   }))
                 }
-                placeholder="você@empresa.com"
+                placeholder="voce@empresa.com"
                 type="email"
                 value={loginForm.email}
               />
@@ -491,7 +359,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                     email: event.target.value,
                   }))
                 }
-                placeholder="você@empresa.com"
+                placeholder="voce@empresa.com"
                 type="email"
                 value={registerForm.email}
               />
@@ -532,110 +400,6 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 </div>
               </div>
 
-              <div className="auth-form-row auth-form-row-cep">
-                <div>
-                  <label htmlFor="register-cep">CEP</label>
-                  <input
-                    autoComplete="postal-code"
-                    id="register-cep"
-                    inputMode="numeric"
-                    onBlur={() => {
-                      void handleCepLookup({ silent: true })
-                    }}
-                    onChange={(event) => {
-                      updateAddressField('cep', normalizeCep(event.target.value))
-                    }}
-                    placeholder="00000-000"
-                    type="text"
-                    value={formatCep(registerForm.address.cep)}
-                  />
-                </div>
-
-                <button
-                  className="auth-secondary"
-                  disabled={isSubmitting || isCepLoading}
-                  onClick={() => {
-                    void handleCepLookup()
-                  }}
-                  type="button"
-                >
-                  {isCepLoading ? 'Buscando CEP...' : 'Buscar CEP'}
-                </button>
-              </div>
-
-              <label htmlFor="register-street">Endereço</label>
-              <input
-                autoComplete="street-address"
-                id="register-street"
-                onChange={(event) => {
-                  updateAddressField('street', event.target.value)
-                }}
-                placeholder="Rua/Avenida"
-                type="text"
-                value={registerForm.address.street}
-              />
-
-              <div className="auth-form-row">
-                <div>
-                  <label htmlFor="register-number">Número</label>
-                  <input
-                    autoComplete="off"
-                    id="register-number"
-                    onChange={(event) => {
-                      updateAddressField('number', event.target.value)
-                    }}
-                    placeholder="123"
-                    type="text"
-                    value={registerForm.address.number}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="register-complement">Complemento</label>
-                  <input
-                    autoComplete="off"
-                    id="register-complement"
-                    onChange={(event) => {
-                      updateAddressField('complement', event.target.value)
-                    }}
-                    placeholder="Apto, bloco, sala (opcional)"
-                    type="text"
-                    value={registerForm.address.complement}
-                  />
-                </div>
-              </div>
-
-              <div className="auth-form-row auth-form-row-city">
-                <div>
-                  <label htmlFor="register-city">Cidade</label>
-                  <input
-                    autoComplete="address-level2"
-                    id="register-city"
-                    onChange={(event) => {
-                      updateAddressField('city', event.target.value)
-                    }}
-                    placeholder="Cidade"
-                    type="text"
-                    value={registerForm.address.city}
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="register-state">Estado (UF)</label>
-                  <input
-                    autoComplete="address-level1"
-                    id="register-state"
-                    maxLength={2}
-                    onChange={(event) => {
-                      updateAddressField('state', event.target.value.toUpperCase())
-                    }}
-                    placeholder="SP"
-                    type="text"
-                    value={registerForm.address.state}
-                  />
-                </div>
-              </div>
-
               <button className="auth-primary" disabled={isSubmitting} type="submit">
                 {isSubmitting ? 'Criando conta...' : 'Criar conta'}
               </button>
@@ -649,7 +413,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 autoComplete="email"
                 id="forgot-email"
                 onChange={(event) => setForgotEmail(event.target.value)}
-                placeholder="você@empresa.com"
+                placeholder="voce@empresa.com"
                 type="email"
                 value={forgotEmail}
               />

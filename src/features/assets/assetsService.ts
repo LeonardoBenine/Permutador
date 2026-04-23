@@ -1,4 +1,4 @@
-import type { AuthUser } from '../auth/types'
+﻿import type { AuthUser } from '../auth/types'
 import type {
   AssetRecord,
   AssetSwipeRecord,
@@ -6,11 +6,6 @@ import type {
   EstimatedValueAudit,
   SwipeDecision,
 } from './types'
-import {
-  FIPEZAP_RESIDENTIAL_CITY_M2,
-  FIPEZAP_RESIDENTIAL_REFERENCE,
-  FIPEZAP_RESIDENTIAL_SOURCE,
-} from './fipezapResidentialSaleData'
 
 const ASSETS_STORAGE_KEY = 'permutador.assets'
 const SWIPES_STORAGE_KEY = 'permutador.asset-swipes'
@@ -119,29 +114,10 @@ const REGION_FACTOR_BY_STATE: Record<string, number> = {
   TO: -0.005,
 }
 
-const HOUSE_PRICE_PER_M2_BY_STATE: Record<string, number> = {
-  DF: 7600,
-  ES: 5800,
-  GO: 5200,
-  MG: 5600,
-  PR: 5900,
-  RJ: 8300,
-  RS: 5600,
-  SC: 6200,
-  SP: 7800,
-}
-
-const LAND_PRICE_PER_M2_BY_STATE: Record<string, number> = {
-  DF: 2600,
-  ES: 1700,
-  GO: 1300,
-  MG: 1600,
-  PR: 1800,
-  RJ: 2800,
-  RS: 1500,
-  SC: 1900,
-  SP: 2900,
-}
+const PROPERTY_SOURCE_TIMEOUT_MS = 12_000
+const PROPERTY_MIN_PRICE = 40_000
+const PROPERTY_MAX_PRICE = 50_000_000
+const PROPERTY_MIN_COMPARABLES = 3
 
 interface StoredAccountLike {
   address?: {
@@ -165,12 +141,63 @@ interface FipeVehicleInfo {
   referenceMonth: string
 }
 
+type PropertyType = 'apartment' | 'house' | 'land'
+type PropertyProviderId = 'zapimoveis' | 'vivareal' | 'quintoandar' | 'imovelweb'
+
+interface PropertySource {
+  id: PropertyProviderId
+  name: string
+  weight: number
+}
+
+interface PropertyComparable {
+  area: number
+  bathrooms: number | null
+  bedrooms: number | null
+  price: number
+  provider: PropertySource
+  rawText: string
+  type: PropertyType | 'unknown'
+}
+
+interface PropertyComparableTarget {
+  area: number
+  city: string
+  district: string
+  state: string
+  street: string
+  type: PropertyType
+}
+
+interface PropertyComparableScored extends PropertyComparable {
+  score: number
+}
+
+const PROPERTY_SOURCES: PropertySource[] = [
+  { id: 'zapimoveis', name: 'Zap Imoveis', weight: 1 },
+  { id: 'vivareal', name: 'Viva Real', weight: 1 },
+  { id: 'quintoandar', name: 'QuintoAndar', weight: 0.9 },
+  { id: 'imovelweb', name: 'Imovelweb', weight: 0.8 },
+]
+
 let cachedCarBrands: FipeNamedCode[] | null = null
 const cachedCarModelsByBrand = new Map<string, FipeNamedCode[]>()
 const cachedCarYearsByModel = new Map<string, FipeNamedCode[]>()
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function formatCurrencyLabel(value: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    currency: 'BRL',
+    style: 'currency',
+  }).format(value)
+}
+
+function formatFactorPercent(value: number): string {
+  const percent = (value * 100).toFixed(2)
+  return `${value >= 0 ? '+' : ''}${percent}%`
 }
 
 function createSeedPhoto(label: string, accentColor: string): string {
@@ -232,10 +259,17 @@ function normalizeAssetAudit(value: unknown): EstimatedValueAudit | null {
     },
     baseValue: audit.baseValue,
     confidence: clamp(audit.confidence, 0, 1),
+    memory: Array.isArray(audit.memory)
+      ? audit.memory.filter((item): item is string => typeof item === 'string')
+      : undefined,
     method:
       audit.method === 'fipe_api_v2_adjusted'
         ? 'fipe_api_v2_adjusted'
-        : 'manual_fallback',
+        : audit.method === 'property_market_comparables'
+          ? 'property_market_comparables'
+        : audit.method === 'property_public_base_adjusted'
+          ? 'property_public_base_adjusted'
+          : 'manual_fallback',
     quotedAt: audit.quotedAt,
     region: audit.region,
     source: audit.source,
@@ -623,7 +657,7 @@ function parseCityAndStateFromAddress(
     return { city: '', state: '' }
   }
 
-  const endPattern = /(?:-|,)\s*([^,/]+?)\s*\/\s*([a-z]{2})\s*$/i
+  const endPattern = /(?:-|,)\s*([^,/-]+?)\s*\/\s*([a-z]{2})\s*$/i
   const endMatch = trimmed.match(endPattern)
 
   if (!endMatch) {
@@ -645,106 +679,556 @@ function normalizeFipeZapCity(city: string): string {
     .replace(/\s+/g, ' ')
 }
 
-function getFipeZapCityM2(city: string, state: string): number | null {
-  const normalizedCity = normalizeFipeZapCity(city)
-  const normalizedState = state.trim().toUpperCase()
+function toCitySlug(value: string): string {
+  const normalized = normalizeFipeZapCity(value)
+  return normalized.replace(/\s+/g, '-')
+}
 
-  if (!normalizedCity || normalizedState.length !== 2) {
+function parsePropertyAddressParts(address: string): {
+  city: string
+  district: string
+  number: string
+  state: string
+  street: string
+} {
+  const trimmed = address.trim()
+
+  if (!trimmed) {
+    return {
+      city: '',
+      district: '',
+      number: '',
+      state: '',
+      street: '',
+    }
+  }
+
+  const cityState = parseCityAndStateFromAddress(trimmed)
+  const city = cityState.city
+  const state = cityState.state
+  const cityStatePattern = /(?:-|,)\s*([^,/-]+?)\s*\/\s*[a-z]{2}\s*$/i
+  const withoutCityState = trimmed.replace(cityStatePattern, '').trim()
+  const sections = withoutCityState
+    .split('-')
+    .map((section) => section.trim())
+    .filter(Boolean)
+  const streetAndNumber = sections[0] ?? ''
+  const district = sections[1] ?? ''
+  const streetNumberMatch = streetAndNumber.match(/^(.*?)(?:,\s*|\s+)(\d+[a-z0-9/-]*)$/i)
+  const street = streetNumberMatch?.[1]?.trim() || streetAndNumber.split(',')[0]?.trim() || streetAndNumber
+  const number = streetNumberMatch?.[2]?.trim() ?? ''
+
+  return { city, district, number, state, street }
+}
+
+function inferPropertyTypeFromSnippet(value: string): PropertyType | 'unknown' {
+  const normalized = normalizeComparableText(value)
+
+  if (!normalized) {
+    return 'unknown'
+  }
+
+  if (/\b(terreno|lote|lotes|loteamento)\b/.test(normalized)) {
+    return 'land'
+  }
+
+  if (/\b(apartamento|kitnet|studio|cobertura|flat)\b/.test(normalized)) {
+    return 'apartment'
+  }
+
+  if (/\b(casa|sobrado|condominio)\b/.test(normalized)) {
+    return 'house'
+  }
+
+  return 'unknown'
+}
+
+function parseComparableNumberRange(value: string): number | null {
+  const numbers = value
+    .split('-')
+    .map((item) => Number(item.trim()))
+    .filter((item) => Number.isFinite(item) && item > 0)
+
+  if (numbers.length === 0) {
     return null
   }
 
-  const key = `${normalizedCity}|${normalizedState}`
-  return FIPEZAP_RESIDENTIAL_CITY_M2[key] ?? null
+  if (numbers.length === 1) {
+    return numbers[0]
+  }
+
+  return (numbers[0] + numbers[1]) / 2
 }
 
-function estimatePropertyValue(payload: {
+function parseAreaFromComparableSnippet(value: string): number | null {
+  const areaMatch = value.match(
+    /(\d{1,4}(?:\s*-\s*\d{1,4})?)\s*(?:m²|m2|m\s*2|metros?\s+quadrados?)/i,
+  )
+
+  if (!areaMatch) {
+    return null
+  }
+
+  return parseComparableNumberRange(areaMatch[1].replace(/\s+/g, ''))
+}
+
+function parseCountFromComparableSnippet(
+  value: string,
+  singular: string,
+  plural = `${singular}s`,
+): number | null {
+  const match = value.match(
+    new RegExp(
+      `(\\d{1,2})(?:\\s*-\\s*\\d{1,2})?\\s*${singular}|(\\d{1,2})(?:\\s*-\\s*\\d{1,2})?\\s*${plural}`,
+      'i',
+    ),
+  )
+  const extracted = match?.[1] ?? match?.[2]
+
+  if (!extracted) {
+    return null
+  }
+
+  const parsed = Number(extracted)
+
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function sanitizeComparableSourceText(value: string): string {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function looksLikeBlockedSourceResponse(value: string): boolean {
+  const normalized = normalizeComparableText(value)
+
+  if (!normalized) {
+    return true
+  }
+
+  return (
+    normalized.includes('performing security verification') ||
+    normalized.includes('just a moment') ||
+    normalized.includes('captcha') ||
+    normalized.includes('access denied')
+  )
+}
+
+function hasComparableMarketData(value: string): boolean {
+  const hasPrice = /R\$\s?\d/.test(value)
+  const hasArea =
+    /(?:\bm²\b|\bm2\b|\bm\s*2\b|metros?\s+quadrados?)/i.test(value) ||
+    /(\d{1,4}(?:\s*-\s*\d{1,4})?)\s*m²/i.test(value)
+
+  return hasPrice && hasArea
+}
+
+function buildPropertySearchUrls(payload: {
+  city: string
+  state: string
+  type: PropertyType
+}): Array<{ provider: PropertySource; url: string }> {
+  const citySlug = toCitySlug(payload.city)
+  const stateLower = payload.state.toLowerCase()
+
+  if (!citySlug || stateLower.length !== 2) {
+    return []
+  }
+
+  const byType: Record<
+    PropertyType,
+    {
+      imovelweb: string
+      quintoandar: string
+      vivareal: string
+      zapimoveis: string
+    }
+  > = {
+    apartment: {
+      imovelweb: `https://www.imovelweb.com.br/apartamentos-venda-${citySlug}-${stateLower}.html`,
+      quintoandar: `https://www.quintoandar.com.br/comprar/imovel/${citySlug}-${stateLower}-brasil/apartamento`,
+      vivareal: `https://www.vivareal.com.br/venda/${stateLower}/${citySlug}/apartamento_residencial/`,
+      zapimoveis: `https://www.zapimoveis.com.br/venda/apartamentos/${stateLower}+${citySlug}/`,
+    },
+    house: {
+      imovelweb: `https://www.imovelweb.com.br/casas-venda-${citySlug}-${stateLower}.html`,
+      quintoandar: `https://www.quintoandar.com.br/comprar/imovel/${citySlug}-${stateLower}-brasil/casa`,
+      vivareal: `https://www.vivareal.com.br/venda/${stateLower}/${citySlug}/casa_residencial/`,
+      zapimoveis: `https://www.zapimoveis.com.br/venda/casas/${stateLower}+${citySlug}/`,
+    },
+    land: {
+      imovelweb: `https://www.imovelweb.com.br/terrenos-venda-${citySlug}-${stateLower}.html`,
+      quintoandar: `https://www.quintoandar.com.br/comprar/imovel/${citySlug}-${stateLower}-brasil`,
+      vivareal: `https://www.vivareal.com.br/venda/${stateLower}/${citySlug}/lote-terreno_residencial/`,
+      zapimoveis: `https://www.zapimoveis.com.br/venda/terrenos-lotes-condominios/${stateLower}+${citySlug}/`,
+    },
+  }
+
+  const urlsForType = byType[payload.type]
+
+  return PROPERTY_SOURCES.map((provider) => ({
+    provider,
+    url: urlsForType[provider.id],
+  }))
+}
+
+async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, timeoutMs)
+
+  try {
+    const response = await fetch(url, { signal: controller.signal })
+
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`)
+    }
+
+    return await response.text()
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
+function buildJinaMirrorUrl(targetUrl: string): string {
+  const withoutProtocol = targetUrl.replace(/^https?:\/\//i, '')
+  return `https://r.jina.ai/http://${withoutProtocol}`
+}
+
+async function fetchComparableSourceContent(targetUrl: string): Promise<string> {
+  const mirrors = [
+    buildJinaMirrorUrl(targetUrl),
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+  ]
+
+  for (const mirrorUrl of mirrors) {
+    try {
+      const content = await fetchTextWithTimeout(mirrorUrl, PROPERTY_SOURCE_TIMEOUT_MS)
+      const normalizedContent = sanitizeComparableSourceText(content)
+
+      if (looksLikeBlockedSourceResponse(normalizedContent)) {
+        continue
+      }
+
+      if (!hasComparableMarketData(normalizedContent)) {
+        continue
+      }
+
+      return normalizedContent
+    } catch {
+      continue
+    }
+  }
+
+  throw new Error('Comparable source unavailable')
+}
+
+function extractComparablesFromContent(
+  content: string,
+  provider: PropertySource,
+): PropertyComparable[] {
+  const comparables: PropertyComparable[] = []
+  const dedupe = new Set<string>()
+  const priceRegex = /R\$\s?(\d{1,3}(?:\.\d{3})+(?:,\d{2})?|\d{4,}(?:,\d{2})?)/gi
+  let match = priceRegex.exec(content)
+
+  while (match) {
+    const fullPrice = match[0]
+    const startIndex = match.index
+    const rawPrice = parsePriceToNumber(fullPrice)
+
+    if (
+      Number.isFinite(rawPrice) &&
+      rawPrice >= PROPERTY_MIN_PRICE &&
+      rawPrice <= PROPERTY_MAX_PRICE
+    ) {
+      const beforePrice = content.slice(Math.max(0, startIndex - 24), startIndex).toLowerCase()
+      const afterPrice = content
+        .slice(startIndex + fullPrice.length, startIndex + fullPrice.length + 24)
+        .toLowerCase()
+      const isCondoOrTax =
+        beforePrice.includes('cond') ||
+        beforePrice.includes('iptu') ||
+        afterPrice.includes('cond') ||
+        afterPrice.includes('iptu')
+
+      if (!isCondoOrTax) {
+        const snippetStart = Math.max(0, startIndex - 520)
+        const snippetEnd = Math.min(content.length, startIndex + 420)
+        const snippet = content.slice(snippetStart, snippetEnd)
+        const area = parseAreaFromComparableSnippet(snippet)
+
+        if (area !== null && area >= 15) {
+          const bedrooms =
+            parseCountFromComparableSnippet(snippet, 'quarto') ??
+            parseCountFromComparableSnippet(snippet, 'dormitorio') ??
+            parseCountFromComparableSnippet(snippet, 'dorm') ??
+            null
+          const bathrooms =
+            parseCountFromComparableSnippet(snippet, 'banheiro') ??
+            parseCountFromComparableSnippet(snippet, 'banho') ??
+            null
+          const inferredType = inferPropertyTypeFromSnippet(snippet)
+          const dedupeKey = `${provider.id}|${rawPrice}|${Math.round(area)}|${bedrooms ?? '-'}|${bathrooms ?? '-'}|${inferredType}`
+
+          if (!dedupe.has(dedupeKey)) {
+            dedupe.add(dedupeKey)
+            comparables.push({
+              area,
+              bathrooms,
+              bedrooms,
+              price: rawPrice,
+              provider,
+              rawText: snippet,
+              type: inferredType,
+            })
+          }
+        }
+      }
+    }
+
+    match = priceRegex.exec(content)
+  }
+
+  return comparables
+}
+
+function scoreComparableAgainstTarget(
+  comparable: PropertyComparable,
+  target: PropertyComparableTarget,
+): number {
+  const areaScore =
+    target.area > 0
+      ? clamp(1 - Math.abs(comparable.area - target.area) / target.area, 0, 1)
+      : 0.45
+  const typeScore =
+    comparable.type === target.type ? 1 : comparable.type === 'unknown' ? 0.5 : 0.1
+  const cityScore = target.city ? scoreTextMatch(comparable.rawText, target.city) : 0
+  const districtScore = target.district ? scoreTextMatch(comparable.rawText, target.district) : 0
+  const streetScore = target.street ? scoreTextMatch(comparable.rawText, target.street) : 0
+  const stateScore =
+    target.state && normalizeComparableText(comparable.rawText).includes(target.state.toLowerCase())
+      ? 0.18
+      : 0
+  const locationScore = clamp(
+    cityScore * 0.34 + districtScore * 0.38 + streetScore * 0.28 + stateScore,
+    0,
+    1,
+  )
+  const score = clamp(areaScore * 0.55 + locationScore * 0.3 + typeScore * 0.15, 0, 1)
+
+  return score * comparable.provider.weight
+}
+
+function percentile(sortedValues: number[], p: number): number {
+  if (sortedValues.length === 0) {
+    return 0
+  }
+
+  const safeP = clamp(p, 0, 1)
+  const position = (sortedValues.length - 1) * safeP
+  const lowerIndex = Math.floor(position)
+  const upperIndex = Math.ceil(position)
+
+  if (lowerIndex === upperIndex) {
+    return sortedValues[lowerIndex]
+  }
+
+  const weight = position - lowerIndex
+  return sortedValues[lowerIndex] * (1 - weight) + sortedValues[upperIndex] * weight
+}
+
+async function estimatePropertyValue(payload: {
   address?: string
   bathrooms?: number
   bedrooms?: number
   builtArea?: number
+  floor?: number
   landArea: number
   ownerEmail: string
-  type: 'house' | 'land'
-}): {
+  type: PropertyType
+}): Promise<{
+  audit: EstimatedValueAudit
   confidence: number
   estimatedValue: number
   quotedAt: string
   source: string
-} {
+}> {
   const ownerState = getOwnerState(payload.ownerEmail)
-  const addressGeo = parseCityAndStateFromAddress(payload.address ?? '')
+  const addressParts = parsePropertyAddressParts(payload.address ?? '')
   const resolvedState =
-    addressGeo.state.length === 2
-      ? addressGeo.state
+    addressParts.state.length === 2
+      ? addressParts.state
       : ownerState.length === 2
         ? ownerState
         : ''
-  const fipeZapCityM2 = getFipeZapCityM2(addressGeo.city, resolvedState)
-  const regionFactor = REGION_FACTOR_BY_STATE[resolvedState] ?? 0
-  const hasAddress = Boolean(payload.address?.trim())
-  const quotedAt = new Date().toISOString()
-  const sourceWithReference = `${FIPEZAP_RESIDENTIAL_SOURCE} (${FIPEZAP_RESIDENTIAL_REFERENCE})`
-  const source =
-    fipeZapCityM2 !== null
-      ? `${sourceWithReference} + ajustes de características do imóvel`
-      : 'Heurística de mercado com fallback por UF (sem cobertura FIPEZAP da cidade)'
+  const city = addressParts.city
 
-  if (payload.type === 'house') {
-    const builtArea = Math.max(0, payload.builtArea ?? 0)
-    const bathrooms = Math.max(0, payload.bathrooms ?? 0)
-    const bedrooms = Math.max(0, payload.bedrooms ?? 0)
-    const baseM2 = fipeZapCityM2 ?? HOUSE_PRICE_PER_M2_BY_STATE[resolvedState] ?? 4700
-
-    const builtAreaComponent = builtArea * baseM2
-    const landComponent = payload.landArea * (baseM2 * 0.2)
-    const roomComponent = bedrooms * 22000 + bathrooms * 18000
-    const addressFactor = hasAddress ? 0.015 : 0
-    const totalFactor = regionFactor + addressFactor
-
-    return {
-      confidence: clamp(
-        0.5 +
-          (resolvedState ? 0.08 : 0) +
-          (hasAddress ? 0.05 : 0) +
-          (fipeZapCityM2 !== null ? 0.12 : 0) +
-          (bedrooms + bathrooms > 0 ? 0.04 : 0),
-        0.35,
-        0.92,
-      ),
-      estimatedValue: Math.max(
-        35000,
-        Math.round((builtAreaComponent + landComponent + roomComponent) * (1 + totalFactor)),
-      ),
-      quotedAt,
-      source,
-    }
+  if (!city || resolvedState.length !== 2) {
+    throw new Error('Endereco insuficiente para comparacao de mercado')
   }
 
-  const baseM2 =
-    fipeZapCityM2 !== null
-      ? Math.round(fipeZapCityM2 * 0.34)
-      : LAND_PRICE_PER_M2_BY_STATE[resolvedState] ?? 900
-  const addressFactor = hasAddress ? 0.02 : 0
-  const totalFactor = regionFactor + addressFactor
+  const targetArea =
+    payload.type === 'land'
+      ? Math.max(0, payload.landArea)
+      : Math.max(0, payload.builtArea ?? 0)
+
+  if (!Number.isFinite(targetArea) || targetArea <= 0) {
+    throw new Error('Area invalida para comparacao')
+  }
+
+  const target: PropertyComparableTarget = {
+    area: targetArea,
+    city,
+    district: addressParts.district,
+    state: resolvedState,
+    street: addressParts.street,
+    type: payload.type,
+  }
+
+  const searchUrls = buildPropertySearchUrls({
+    city,
+    state: resolvedState,
+    type: payload.type,
+  })
+
+  const comparableResult = await Promise.allSettled(
+    searchUrls.map(async ({ provider, url }) => {
+      const content = await fetchComparableSourceContent(url)
+      return extractComparablesFromContent(content, provider)
+    }),
+  )
+
+  const allComparables = comparableResult.flatMap((result) =>
+    result.status === 'fulfilled' ? result.value : [],
+  )
+
+  const compatibleComparables = allComparables.filter(
+    (comparable) => comparable.type === payload.type || comparable.type === 'unknown',
+  )
+  const rankedComparables: PropertyComparableScored[] = compatibleComparables
+    .map((comparable) => ({
+      ...comparable,
+      score: scoreComparableAgainstTarget(comparable, target),
+    }))
+    .filter((comparable) => comparable.score > 0)
+    .sort((a, b) => b.score - a.score)
+
+  const strictSelection = rankedComparables.filter((comparable) => comparable.score >= 0.45).slice(0, 36)
+  const primarySelection = rankedComparables.filter((comparable) => comparable.score >= 0.3).slice(0, 36)
+  const relaxedSelection = rankedComparables.filter((comparable) => comparable.score >= 0.18).slice(0, 36)
+  const fallbackSelection = rankedComparables.slice(0, 36)
+  const selectedComparables =
+    strictSelection.length >= PROPERTY_MIN_COMPARABLES
+      ? strictSelection
+      : primarySelection.length >= PROPERTY_MIN_COMPARABLES
+        ? primarySelection
+        : relaxedSelection.length >= PROPERTY_MIN_COMPARABLES
+          ? relaxedSelection
+          : fallbackSelection
+
+  if (selectedComparables.length === 0) {
+    throw new Error('Nao foi possivel encontrar comparaveis de mercado para esse perfil de imovel')
+  }
+
+  const scoredPricePerM2 = selectedComparables
+    .map((comparable) => ({
+      pricePerM2: comparable.price / comparable.area,
+      score: comparable.score,
+    }))
+    .filter(
+      (item) => Number.isFinite(item.pricePerM2) && item.pricePerM2 > 150 && item.pricePerM2 < 120000,
+    )
+
+  if (scoredPricePerM2.length === 0) {
+    throw new Error('Nao foi possivel obter preco medio por metro quadrado')
+  }
+
+  const sortedPricePerM2 = [...scoredPricePerM2]
+    .map((item) => item.pricePerM2)
+    .sort((a, b) => a - b)
+  const lowerBound = percentile(sortedPricePerM2, 0.12)
+  const upperBound = percentile(sortedPricePerM2, 0.88)
+  const trimmedPricePerM2 = scoredPricePerM2.filter(
+    (item) => item.pricePerM2 >= lowerBound && item.pricePerM2 <= upperBound,
+  )
+  const finalPricePerM2 = (trimmedPricePerM2.length > 0 ? trimmedPricePerM2 : scoredPricePerM2).reduce(
+    (accumulator, item) => {
+      const weight = Math.max(0.14, item.score)
+
+      return {
+        total: accumulator.total + item.pricePerM2 * weight,
+        weight: accumulator.weight + weight,
+      }
+    },
+    { total: 0, weight: 0 },
+  )
+
+  if (!Number.isFinite(finalPricePerM2.total) || finalPricePerM2.weight <= 0) {
+    throw new Error('Falha ao consolidar comparaveis')
+  }
+
+  const pricePerM2 = finalPricePerM2.total / finalPricePerM2.weight
+  const estimatedValue = Math.max(20000, Math.round(pricePerM2 * targetArea))
+  const quotedAt = new Date().toISOString()
+  const sourceNames = Array.from(new Set(selectedComparables.map((item) => item.provider.name)))
+  const source = `Comparaveis de mercado por m2: ${sourceNames.join(', ')}`
+  const avgScore =
+    selectedComparables.reduce((sum, item) => sum + item.score, 0) / selectedComparables.length
+  const isLowCoverage = selectedComparables.length < PROPERTY_MIN_COMPARABLES
+  const lowCoveragePenalty = isLowCoverage
+    ? (PROPERTY_MIN_COMPARABLES - selectedComparables.length + 1) * 0.08
+    : 0
+  const confidence = clamp(
+    0.32 +
+      Math.min(selectedComparables.length, 20) * 0.018 +
+      sourceNames.length * 0.1 +
+      avgScore * 0.24 -
+      lowCoveragePenalty,
+    isLowCoverage ? 0.22 : 0.32,
+    0.96,
+  )
+  const regionLabel = `${city}/${resolvedState}`
+  const memory = [
+    `Metodo: media de preco por m2 em anuncios similares (${payload.type}).`,
+    `Comparaveis analisados: ${selectedComparables.length}`,
+    `Fontes utilizadas: ${sourceNames.join(', ')}`,
+    `Preco medio ajustado por m2: ${formatCurrencyLabel(pricePerM2)}`,
+    `Area considerada (${payload.type === 'land' ? 'terreno' : 'construida'}): ${targetArea} m2`,
+    `Valor estimado por comparacao: ${formatCurrencyLabel(estimatedValue)}`,
+  ]
+  if (isLowCoverage) {
+    memory.push('Amostra de comparaveis reduzida; o valor pode variar conforme novas ofertas.')
+  }
 
   return {
-    confidence: clamp(
-      0.46 +
-        (resolvedState ? 0.07 : 0) +
-        (hasAddress ? 0.05 : 0) +
-        (fipeZapCityM2 !== null ? 0.1 : 0),
-      0.32,
-      0.9,
-    ),
-    estimatedValue: Math.max(20000, Math.round(payload.landArea * baseM2 * (1 + totalFactor))),
+    audit: {
+      adjustments: {
+        kmFactor: 0,
+        regionFactor: 0,
+        totalFactor: 0,
+        yearFactor: 0,
+      },
+      baseValue: Math.round(pricePerM2 * targetArea),
+      confidence,
+      memory,
+      method: 'property_market_comparables',
+      quotedAt,
+      region: regionLabel,
+      source,
+    },
+    confidence,
+    estimatedValue,
     quotedAt,
-    source:
-      fipeZapCityM2 !== null
-        ? `${sourceWithReference} convertido para terreno + ajustes de região`
-        : source,
+    source,
   }
 }
-
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
 
@@ -802,12 +1286,26 @@ function buildManualFallbackAudit(payload: {
   year: number
 }): { audit: EstimatedValueAudit; estimatedValue: number } {
   const baseValue = payload.manualEstimatedValue ?? Math.max(18000, (2030 - payload.year) * 3200)
+  const baseSourceLabel = payload.manualEstimatedValue
+    ? 'valor informado manualmente'
+    : 'heuristica de ano/modelo (fallback)'
+  const memory = [
+    `Base (${baseSourceLabel}): ${formatCurrencyLabel(baseValue)}`,
+    `Ajuste de km: ${formatFactorPercent(payload.adjustments.kmFactor)}`,
+    `Ajuste de ano: ${formatFactorPercent(payload.adjustments.yearFactor)}`,
+    `Ajuste de regiao (${payload.regionLabel}): ${formatFactorPercent(
+      payload.adjustments.regionFactor,
+    )}`,
+    `Fator total: ${formatFactorPercent(payload.adjustments.totalFactor)}`,
+    `Valor final estimado: ${formatCurrencyLabel(payload.adjustedValue)}`,
+  ]
 
   return {
     audit: {
       adjustments: payload.adjustments,
       baseValue,
       confidence: payload.manualEstimatedValue ? 0.45 : 0.3,
+      memory,
       method: 'manual_fallback',
       quotedAt: new Date().toISOString(),
       region: payload.regionLabel,
@@ -919,12 +1417,21 @@ async function estimateCarValueWithFipe(payload: {
       0.35,
       0.98,
     )
+    const memory = [
+      `Base FIPE (${fipeInfo.referenceMonth}): ${formatCurrencyLabel(baseValue)}`,
+      `Ajuste de km: ${formatFactorPercent(adjusted.adjustments.kmFactor)}`,
+      `Ajuste de ano: ${formatFactorPercent(adjusted.adjustments.yearFactor)}`,
+      `Ajuste de regiao (${regionLabel}): ${formatFactorPercent(adjusted.adjustments.regionFactor)}`,
+      `Fator total: ${formatFactorPercent(adjusted.adjustments.totalFactor)}`,
+      `Valor final estimado: ${formatCurrencyLabel(adjusted.adjustedValue)}`,
+    ]
 
     return {
       audit: {
         adjustments: adjusted.adjustments,
         baseValue,
         confidence,
+        memory,
         method: 'fipe_api_v2_adjusted',
         quotedAt: new Date().toISOString(),
         region: regionLabel,
@@ -1139,9 +1646,10 @@ export const assetsService = {
     bathrooms?: number
     bedrooms?: number
     builtArea?: number
+    floor?: number
     landArea: number
     ownerEmail: string
-    type: 'house' | 'land'
+    type: 'apartment' | 'house' | 'land'
   }) {
     return estimatePropertyValue(payload)
   },
@@ -1253,5 +1761,29 @@ export const assetsService = {
     writeAssets(nextAssets)
 
     return updatedAsset
+  },
+
+  async deleteAsset(user: AuthUser, assetId: string) {
+    await wait()
+
+    const ownerEmail = normalizeEmail(user.email)
+    const currentAssets = readAssets()
+    const existingAsset = currentAssets.find(
+      (asset) => asset.id === assetId && asset.ownerEmail === ownerEmail,
+    )
+
+    if (!existingAsset) {
+      throw new Error('Ativo nao encontrado para exclusao.')
+    }
+
+    const nextAssets = currentAssets.filter((asset) => asset.id !== assetId)
+    writeAssets(nextAssets)
+
+    const nextSwipes = readSwipes().filter(
+      (swipe) => swipe.ownAssetId !== assetId && swipe.targetAssetId !== assetId,
+    )
+    writeSwipes(nextSwipes)
+
+    return existingAsset
   },
 }

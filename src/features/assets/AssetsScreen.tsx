@@ -139,7 +139,7 @@ function parsePropertyAddress(address: string): Partial<PropertyAssetForm> {
     return {}
   }
 
-  const cityStateMatch = trimmed.match(/(?:-|,)\s*([^,/]+?)\s*\/\s*([a-z]{2})\s*$/i)
+  const cityStateMatch = trimmed.match(/(?:-|,)\s*([^,/-]+?)\s*\/\s*([a-z]{2})\s*$/i)
   const city = cityStateMatch?.[1]?.trim() ?? ''
   const state = cityStateMatch?.[2]?.trim().toUpperCase() ?? ''
   const withoutCityState =
@@ -204,6 +204,32 @@ function brandDedupKey(value: string): string {
   }
 
   return normalized
+}
+
+function mapPropertyEstimationError(error: unknown, fallbackMessage: string): string {
+  const message = error instanceof Error ? normalizeSearchValue(error.message) : ''
+
+  if (!message) {
+    return fallbackMessage
+  }
+
+  if (
+    message.includes('comparaveis') ||
+    message.includes('preco medio por metro quadrado') ||
+    message.includes('perfil de imovel')
+  ) {
+    return 'Não encontramos imóveis similares suficientes para calcular o valor por m² nesta região agora.'
+  }
+
+  if (message.includes('endereco insuficiente')) {
+    return 'Complete CEP e número para montar um endereço válido.'
+  }
+
+  if (message.includes('area invalida')) {
+    return 'Informe uma área válida para calcular o valor estimado.'
+  }
+
+  return fallbackMessage
 }
 
 function dedupeBrandOptions(brands: FipeOption[]): FipeOption[] {
@@ -344,6 +370,7 @@ function propertyValidationError(
   options: {
     includeBuiltArea: boolean
     includeFloor: boolean
+    includeLandArea?: boolean
     requireEstimatedValue?: boolean
   },
 ): string | null {
@@ -369,10 +396,12 @@ function propertyValidationError(
     return 'Informe o número do imóvel.'
   }
 
-  const landArea = parsePositiveNumber(form.landArea)
+  if (options.includeLandArea ?? true) {
+    const landArea = parsePositiveNumber(form.landArea)
 
-  if (Number.isNaN(landArea) || landArea <= 0) {
-    return 'Informe a metragem do terreno com valor válido.'
+    if (Number.isNaN(landArea) || landArea <= 0) {
+      return 'Informe a metragem do terreno com valor válido.'
+    }
   }
 
   if (options.includeBuiltArea) {
@@ -459,6 +488,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [assetType, setAssetType] = useState<AssetType>('car')
   const [activeMenu, setActiveMenu] = useState<AppMenu>('assets')
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null)
+  const [isDeletingAsset, setIsDeletingAsset] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [isEstimatingCarValue, setIsEstimatingCarValue] = useState(false)
   const [isLoadingCarCatalog, setIsLoadingCarCatalog] = useState(false)
@@ -472,6 +502,9 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [carEstimationConfidence, setCarEstimationConfidence] = useState<number | null>(null)
   const [houseEstimationError, setHouseEstimationError] = useState<string | null>(null)
   const [houseEstimationConfidence, setHouseEstimationConfidence] = useState<number | null>(null)
+  const [apartmentEstimationError, setApartmentEstimationError] = useState<string | null>(null)
+  const [apartmentEstimationConfidence, setApartmentEstimationConfidence] =
+    useState<number | null>(null)
   const [landEstimationError, setLandEstimationError] = useState<string | null>(null)
   const [landEstimationConfidence, setLandEstimationConfidence] = useState<number | null>(null)
   const [carCatalogError, setCarCatalogError] = useState<string | null>(null)
@@ -483,6 +516,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [carModels, setCarModels] = useState<FipeOption[]>([])
   const [carYearOptions, setCarYearOptions] = useState<FipeOption[]>([])
   const [isEstimatingHouseValue, setIsEstimatingHouseValue] = useState(false)
+  const [isEstimatingApartmentValue, setIsEstimatingApartmentValue] = useState(false)
   const [isEstimatingLandValue, setIsEstimatingLandValue] = useState(false)
   const [feedback, setFeedback] = useState<AssetFeedback | null>(null)
   const [swipeFeedback, setSwipeFeedback] = useState<AssetFeedback | null>(null)
@@ -514,6 +548,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const selectedOwnAsset = useMemo(
     () => assets.find((asset) => asset.id === selectedOwnAssetId) ?? null,
     [assets, selectedOwnAssetId],
+  )
+  const editingAsset = useMemo(
+    () => assets.find((asset) => asset.id === editingAssetId) ?? null,
+    [assets, editingAssetId],
   )
 
   const swipesForSelectedAsset = useMemo(
@@ -1141,22 +1179,14 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       return
     }
 
-    const landArea = parsePositiveNumber(houseForm.landArea)
     const builtArea = parsePositiveNumber(houseForm.builtArea)
-    const bathrooms = parsePositiveNumber(houseForm.bathrooms)
-    const bedrooms = parsePositiveNumber(houseForm.bedrooms)
+    const landArea = parsePositiveNumber(houseForm.landArea)
     const address = buildPropertyAddress(houseForm)
     const hasResolvedAddress = hasResolvedPropertyAddress(houseForm)
 
     if (
-      Number.isNaN(landArea) ||
-      landArea <= 0 ||
       Number.isNaN(builtArea) ||
       builtArea <= 0 ||
-      Number.isNaN(bathrooms) ||
-      bathrooms < 0 ||
-      Number.isNaN(bedrooms) ||
-      bedrooms < 0 ||
       !hasResolvedAddress ||
       isLookingUpHouseCep
     ) {
@@ -1182,10 +1212,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       void assetsService
         .estimatePropertyValue({
           address,
-          bathrooms,
-          bedrooms,
           builtArea,
-          landArea,
+          landArea: Number.isFinite(landArea) && landArea > 0 ? landArea : builtArea,
           ownerEmail: user.email,
           type: 'house',
         })
@@ -1198,17 +1226,19 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
             ...previous,
             estimatedValue: String(valuation.estimatedValue),
           }))
-          setHouseEstimationConfidence(valuation.confidence)
+          setHouseEstimationConfidence(valuation.audit.confidence)
           setIsEstimatingHouseValue(false)
         })
-        .catch(() => {
+        .catch((error) => {
           if (isCancelled) {
             return
           }
 
           setIsEstimatingHouseValue(false)
           setHouseEstimationConfidence(null)
-          setHouseEstimationError('Não foi possível calcular o valor da casa agora.')
+          setHouseEstimationError(
+            mapPropertyEstimationError(error, 'Não foi possível calcular o valor da casa agora.'),
+          )
         })
     }, 450)
 
@@ -1218,8 +1248,6 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     }
   }, [
     assetType,
-    houseForm.bathrooms,
-    houseForm.bedrooms,
     houseForm.builtArea,
     houseForm.cep,
     houseForm.city,
@@ -1230,6 +1258,97 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     houseForm.state,
     houseForm.street,
     isLookingUpHouseCep,
+    user.email,
+  ])
+
+  useEffect(() => {
+    if (assetType !== 'apartment') {
+      setIsEstimatingApartmentValue(false)
+      setApartmentEstimationError(null)
+      setApartmentEstimationConfidence(null)
+      return
+    }
+
+    const builtArea = parsePositiveNumber(apartmentForm.builtArea)
+    const address = buildPropertyAddress(apartmentForm)
+    const hasResolvedAddress = hasResolvedPropertyAddress(apartmentForm)
+
+    if (
+      Number.isNaN(builtArea) ||
+      builtArea <= 0 ||
+      !hasResolvedAddress ||
+      isLookingUpApartmentCep
+    ) {
+      setIsEstimatingApartmentValue(false)
+      setApartmentEstimationError(null)
+      setApartmentEstimationConfidence(null)
+      setApartmentForm((previous) =>
+        previous.estimatedValue
+          ? {
+              ...previous,
+              estimatedValue: '',
+            }
+          : previous,
+      )
+      return
+    }
+
+    let isCancelled = false
+    setIsEstimatingApartmentValue(true)
+    setApartmentEstimationError(null)
+
+    const timeoutId = window.setTimeout(() => {
+      void assetsService
+        .estimatePropertyValue({
+          address,
+          builtArea,
+          landArea: builtArea,
+          ownerEmail: user.email,
+          type: 'apartment',
+        })
+        .then((valuation) => {
+          if (isCancelled) {
+            return
+          }
+
+          setApartmentForm((previous) => ({
+            ...previous,
+            estimatedValue: String(valuation.estimatedValue),
+          }))
+          setApartmentEstimationConfidence(valuation.audit.confidence)
+          setIsEstimatingApartmentValue(false)
+        })
+        .catch((error) => {
+          if (isCancelled) {
+            return
+          }
+
+          setIsEstimatingApartmentValue(false)
+          setApartmentEstimationConfidence(null)
+          setApartmentEstimationError(
+            mapPropertyEstimationError(
+              error,
+              'Não foi possível calcular o valor do apartamento agora.',
+            ),
+          )
+        })
+    }, 450)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    apartmentForm.builtArea,
+    apartmentForm.cep,
+    apartmentForm.city,
+    apartmentForm.complement,
+    apartmentForm.district,
+    apartmentForm.number,
+    apartmentForm.state,
+    apartmentForm.street,
+    assetType,
+    isLookingUpApartmentCep,
     user.email,
   ])
 
@@ -1281,17 +1400,19 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
             ...previous,
             estimatedValue: String(valuation.estimatedValue),
           }))
-          setLandEstimationConfidence(valuation.confidence)
+          setLandEstimationConfidence(valuation.audit.confidence)
           setIsEstimatingLandValue(false)
         })
-        .catch(() => {
+        .catch((error) => {
           if (isCancelled) {
             return
           }
 
           setIsEstimatingLandValue(false)
           setLandEstimationConfidence(null)
-          setLandEstimationError('Não foi possível calcular o valor do terreno agora.')
+          setLandEstimationError(
+            mapPropertyEstimationError(error, 'Não foi possível calcular o valor do terreno agora.'),
+          )
         })
     }, 450)
 
@@ -1353,6 +1474,9 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     setApartmentForm(createInitialPropertyForm())
     setIsLookingUpApartmentCep(false)
     setApartmentCepError(null)
+    setIsEstimatingApartmentValue(false)
+    setApartmentEstimationError(null)
+    setApartmentEstimationConfidence(null)
     setLandForm(createInitialPropertyForm())
     setIsLookingUpLandCep(false)
     setLandCepError(null)
@@ -1558,6 +1682,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     setLandCepError(null)
     setHouseEstimationError(null)
     setHouseEstimationConfidence(null)
+    setApartmentEstimationError(null)
+    setApartmentEstimationConfidence(null)
     setLandEstimationError(null)
     setLandEstimationConfidence(null)
 
@@ -1581,12 +1707,15 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       })
     } else if (asset.type === 'house') {
       setCarEstimationConfidence(null)
+      setHouseEstimationConfidence(asset.estimatedValueAudit?.confidence ?? null)
       setHouseForm(createPropertyFormFromAsset(asset))
     } else if (asset.type === 'apartment') {
       setCarEstimationConfidence(null)
+      setApartmentEstimationConfidence(asset.estimatedValueAudit?.confidence ?? null)
       setApartmentForm(createPropertyFormFromAsset(asset))
     } else {
       setCarEstimationConfidence(null)
+      setLandEstimationConfidence(asset.estimatedValueAudit?.confidence ?? null)
       setLandForm(createPropertyFormFromAsset(asset))
     }
 
@@ -1605,6 +1734,59 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
     })
   }
 
+
+  async function handleDeleteAsset(asset: AssetRecord) {
+    if (isDeletingAsset || isSaving) {
+      return
+    }
+
+    const label = assetTypeLabels[asset.type].toLowerCase()
+    const shouldDelete = window.confirm(
+      `Tem certeza que deseja apagar este ${label}? Esta acao nao pode ser desfeita.`,
+    )
+
+    if (!shouldDelete) {
+      return
+    }
+
+    try {
+      setIsDeletingAsset(true)
+      setFeedback(null)
+      await assetsService.deleteAsset(user, asset.id)
+      setAssets((previous) => previous.filter((item) => item.id !== asset.id))
+      setSwipeRecords(assetsService.listSwipeDecisions(user.email))
+      setSwipeFeedback(null)
+
+      if (editingAssetId === asset.id) {
+        setEditingAssetId(null)
+        resetAllForms()
+      }
+
+      setFeedback({
+        text: `${assetTypeLabels[asset.type]} apagado com sucesso.`,
+        tone: 'success',
+      })
+    } catch (error) {
+      setFeedback({
+        text: (error as Error).message,
+        tone: 'error',
+      })
+    } finally {
+      setIsDeletingAsset(false)
+    }
+  }
+
+  async function handleDeleteEditingAsset() {
+    if (!editingAsset) {
+      setFeedback({
+        text: 'Ativo em edicao nao encontrado para exclusao.',
+        tone: 'error',
+      })
+      return
+    }
+
+    await handleDeleteAsset(editingAsset)
+  }
   function handleSwipeDecision(decision: SwipeDecision) {
     if (!selectedOwnAssetId || !currentCandidate) {
       return
@@ -1789,26 +1971,21 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
         }
 
         const composedAddress = buildPropertyAddress(houseForm)
-        let estimatedValue = parsePositiveNumber(houseForm.estimatedValue)
-
-        if (Number.isNaN(estimatedValue) || estimatedValue <= 0) {
-          const valuation = await assetsService.estimatePropertyValue({
-            address: composedAddress,
-            bathrooms: parsePositiveNumber(houseForm.bathrooms),
-            bedrooms: parsePositiveNumber(houseForm.bedrooms),
-            builtArea: parsePositiveNumber(houseForm.builtArea),
-            landArea: parsePositiveNumber(houseForm.landArea),
-            ownerEmail: user.email,
-            type: 'house',
-          })
-          estimatedValue = valuation.estimatedValue
-          setHouseForm((previous) => ({
-            ...previous,
-            address: composedAddress,
-            estimatedValue: String(valuation.estimatedValue),
-          }))
-          setHouseEstimationConfidence(valuation.confidence)
-        }
+        const valuation = await assetsService.estimatePropertyValue({
+          address: composedAddress,
+          bathrooms: parsePositiveNumber(houseForm.bathrooms),
+          bedrooms: parsePositiveNumber(houseForm.bedrooms),
+          builtArea: parsePositiveNumber(houseForm.builtArea),
+          landArea: parsePositiveNumber(houseForm.landArea),
+          ownerEmail: user.email,
+          type: 'house',
+        })
+        setHouseForm((previous) => ({
+          ...previous,
+          address: composedAddress,
+          estimatedValue: String(valuation.estimatedValue),
+        }))
+        setHouseEstimationConfidence(valuation.audit.confidence)
 
         const isEditing = Boolean(editingAssetId)
         const savedAsset = editingAssetId
@@ -1822,7 +1999,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               complement: houseForm.complement.trim(),
               description: houseForm.description.trim(),
               district: houseForm.district.trim(),
-              estimatedValue,
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               landArea: parsePositiveNumber(houseForm.landArea),
               number: houseForm.number.trim(),
               photos: houseForm.photos,
@@ -1840,7 +2018,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               complement: houseForm.complement.trim(),
               description: houseForm.description.trim(),
               district: houseForm.district.trim(),
-              estimatedValue,
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               landArea: parsePositiveNumber(houseForm.landArea),
               number: houseForm.number.trim(),
               photos: houseForm.photos,
@@ -1867,13 +2046,32 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
         const error = propertyValidationError(apartmentForm, {
           includeBuiltArea: true,
           includeFloor: true,
+          includeLandArea: false,
+          requireEstimatedValue: false,
         })
 
         if (error) {
           throw new Error(error)
         }
 
+        const apartmentLandArea = parsePositiveNumber(apartmentForm.builtArea)
         const composedAddress = buildPropertyAddress(apartmentForm)
+        const valuation = await assetsService.estimatePropertyValue({
+          address: composedAddress,
+          bathrooms: parsePositiveNumber(apartmentForm.bathrooms),
+          bedrooms: parsePositiveNumber(apartmentForm.bedrooms),
+          builtArea: parsePositiveNumber(apartmentForm.builtArea),
+          floor: parsePositiveNumber(apartmentForm.floor),
+          landArea: apartmentLandArea,
+          ownerEmail: user.email,
+          type: 'apartment',
+        })
+        setApartmentForm((previous) => ({
+          ...previous,
+          estimatedValue: String(valuation.estimatedValue),
+        }))
+        setApartmentEstimationConfidence(valuation.audit.confidence)
+
         const isEditing = Boolean(editingAssetId)
         const savedAsset = editingAssetId
           ? await assetsService.updateAsset(user, editingAssetId, {
@@ -1886,9 +2084,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               complement: apartmentForm.complement.trim(),
               description: apartmentForm.description.trim(),
               district: apartmentForm.district.trim(),
-              estimatedValue: parsePositiveNumber(apartmentForm.estimatedValue),
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               floor: parsePositiveNumber(apartmentForm.floor),
-              landArea: parsePositiveNumber(apartmentForm.landArea),
+              landArea: apartmentLandArea,
               number: apartmentForm.number.trim(),
               photos: apartmentForm.photos,
               state: apartmentForm.state.trim().toUpperCase(),
@@ -1905,9 +2104,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               complement: apartmentForm.complement.trim(),
               description: apartmentForm.description.trim(),
               district: apartmentForm.district.trim(),
-              estimatedValue: parsePositiveNumber(apartmentForm.estimatedValue),
+              estimatedValue: valuation.estimatedValue,
+              estimatedValueAudit: valuation.audit,
               floor: parsePositiveNumber(apartmentForm.floor),
-              landArea: parsePositiveNumber(apartmentForm.landArea),
+              landArea: apartmentLandArea,
               number: apartmentForm.number.trim(),
               photos: apartmentForm.photos,
               state: apartmentForm.state.trim().toUpperCase(),
@@ -1942,23 +2142,18 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       }
 
       const composedAddress = buildPropertyAddress(landForm)
-      let landEstimatedValue = parsePositiveNumber(landForm.estimatedValue)
-
-      if (Number.isNaN(landEstimatedValue) || landEstimatedValue <= 0) {
-        const valuation = await assetsService.estimatePropertyValue({
-          address: composedAddress,
-          landArea: parsePositiveNumber(landForm.landArea),
-          ownerEmail: user.email,
-          type: 'land',
-        })
-        landEstimatedValue = valuation.estimatedValue
-        setLandForm((previous) => ({
-          ...previous,
-          address: composedAddress,
-          estimatedValue: String(valuation.estimatedValue),
-        }))
-        setLandEstimationConfidence(valuation.confidence)
-      }
+      const valuation = await assetsService.estimatePropertyValue({
+        address: composedAddress,
+        landArea: parsePositiveNumber(landForm.landArea),
+        ownerEmail: user.email,
+        type: 'land',
+      })
+      setLandForm((previous) => ({
+        ...previous,
+        address: composedAddress,
+        estimatedValue: String(valuation.estimatedValue),
+      }))
+      setLandEstimationConfidence(valuation.audit.confidence)
 
       const isEditing = Boolean(editingAssetId)
       const savedAsset = editingAssetId
@@ -1971,7 +2166,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
             complement: landForm.complement.trim(),
             description: landForm.description.trim(),
             district: landForm.district.trim(),
-            estimatedValue: landEstimatedValue,
+            estimatedValue: valuation.estimatedValue,
+            estimatedValueAudit: valuation.audit,
             landArea: parsePositiveNumber(landForm.landArea),
             number: landForm.number.trim(),
             photos: landForm.photos,
@@ -1988,7 +2184,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
             complement: landForm.complement.trim(),
             description: landForm.description.trim(),
             district: landForm.district.trim(),
-            estimatedValue: landEstimatedValue,
+            estimatedValue: valuation.estimatedValue,
+            estimatedValueAudit: valuation.audit,
             landArea: parsePositiveNumber(landForm.landArea),
             number: landForm.number.trim(),
             photos: landForm.photos,
@@ -2341,7 +2538,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         form={houseForm}
                         estimatedConfidence={houseEstimationConfidence}
                         estimatedError={houseEstimationError}
-                        estimatedHint="O valor será calculado automaticamente com base pública (FipeZAP) e ajustes por área, cômodos e região."
+                        estimatedHint="O valor será calculado automaticamente por comparáveis de mercado (Zap, Viva Real, QuintoAndar e Imovelweb)."
                         estimatedLabel="Valor estimado por IA (R$)"
                         estimatedReadOnly
                         includeBuiltArea
@@ -2369,9 +2566,16 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                       <PropertyFields
                         cepError={apartmentCepError}
                         form={apartmentForm}
+                        estimatedConfidence={apartmentEstimationConfidence}
+                        estimatedError={apartmentEstimationError}
+                        estimatedHint="O valor será calculado automaticamente por comparáveis de mercado (Zap, Viva Real, QuintoAndar e Imovelweb)."
+                        estimatedLabel="Valor estimado por IA (R$)"
+                        estimatedReadOnly
                         includeBuiltArea
                         includeFloor
+                        includeLandArea={false}
                         isLookingUpCep={isLookingUpApartmentCep}
+                        isEstimatingValue={isEstimatingApartmentValue}
                         onFieldChange={(field, value) => {
                           updatePropertyForm('apartment', field, value)
                         }}
@@ -2396,7 +2600,7 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         form={landForm}
                         estimatedConfidence={landEstimationConfidence}
                         estimatedError={landEstimationError}
-                        estimatedHint="O valor será calculado automaticamente com base pública (FipeZAP) e ajustes por metragem e região."
+                        estimatedHint="O valor será calculado automaticamente por comparáveis de mercado (Zap, Viva Real, QuintoAndar e Imovelweb)."
                         estimatedLabel="Valor estimado por IA (R$)"
                         estimatedReadOnly
                         isLookingUpCep={isLookingUpLandCep}
@@ -2419,7 +2623,11 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   ) : null}
 
                   <div className="assets-actions">
-                    <button className="assets-submit" disabled={isSaving} type="submit">
+                    <button
+                      className="assets-submit"
+                      disabled={isSaving || isDeletingAsset}
+                      type="submit"
+                    >
                       {isSaving
                         ? 'Salvando ativo...'
                         : editingAssetId
@@ -2430,10 +2638,24 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                     {editingAssetId ? (
                       <button
                         className="assets-cancel"
+                        disabled={isSaving || isDeletingAsset}
                         onClick={cancelEditingAsset}
                         type="button"
                       >
                         Cancelar edição
+                      </button>
+                    ) : null}
+
+                    {editingAssetId ? (
+                      <button
+                        className="assets-delete"
+                        disabled={isSaving || isDeletingAsset}
+                        onClick={() => {
+                          void handleDeleteEditingAsset()
+                        }}
+                        type="button"
+                      >
+                        {isDeletingAsset ? 'Apagando ativo...' : 'Apagar ativo'}
                       </button>
                     ) : null}
                   </div>
@@ -2509,7 +2731,9 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                             <>
                               <li>Endereço: {asset.address}</li>
                               <li>Valor estimado: {formatCurrency(asset.estimatedValue)}</li>
-                              <li>Terreno: {formatNumber(asset.landArea)} m²</li>
+                              {asset.type !== 'apartment' ? (
+                                <li>Terreno: {formatNumber(asset.landArea)} m²</li>
+                              ) : null}
                               {asset.type !== 'land' ? (
                                 <li>
                                   Área construída: {formatNumber(asset.builtArea)} m²
@@ -2523,19 +2747,43 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                               {asset.description ? (
                                 <li>Descrição: {asset.description}</li>
                               ) : null}
+                              {asset.estimatedValueAudit ? (
+                                <>
+                                  <li>Fonte: {asset.estimatedValueAudit.source}</li>
+                                  <li>
+                                    Cotacao: {formatDateTime(asset.estimatedValueAudit.quotedAt)}
+                                  </li>
+                                  <li>
+                                    Confianca:{' '}
+                                    {Math.round(asset.estimatedValueAudit.confidence * 100)}%
+                                  </li>
+                                </>
+                              ) : null}
                             </>
                           ) : null}
                         </ul>
 
-                        <button
-                          className="asset-edit"
-                          onClick={() => {
-                            startEditingAsset(asset)
-                          }}
-                          type="button"
-                        >
-                          Editar ativo
-                        </button>
+                        <div className="asset-item-actions">
+                          <button
+                            className="asset-edit"
+                            onClick={() => {
+                              startEditingAsset(asset)
+                            }}
+                            type="button"
+                          >
+                            Editar ativo
+                          </button>
+                          <button
+                            className="asset-delete"
+                            disabled={isSaving || isDeletingAsset}
+                            onClick={() => {
+                              void handleDeleteAsset(asset)
+                            }}
+                            type="button"
+                          >
+                            {isDeletingAsset ? 'Apagando...' : 'Apagar ativo'}
+                          </button>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -2736,10 +2984,12 @@ function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
               <span>Valor estimado</span>
               <strong>{formatCurrency(asset.estimatedValue)}</strong>
             </li>
-            <li>
-              <span>Terreno</span>
-              <strong>{formatNumber(asset.landArea)} m²</strong>
-            </li>
+            {asset.type !== 'apartment' ? (
+              <li>
+                <span>Terreno</span>
+                <strong>{formatNumber(asset.landArea)} m²</strong>
+              </li>
+            ) : null}
             {asset.type !== 'land' ? (
               <li>
                 <span>Área construída</span>
@@ -2777,6 +3027,7 @@ interface PropertyFieldsProps {
   form: PropertyAssetForm
   includeBuiltArea?: boolean
   includeFloor?: boolean
+  includeLandArea?: boolean
   isLookingUpCep?: boolean
   isEstimatingValue?: boolean
   onFieldChange: (field: keyof PropertyAssetForm, value: string) => void
@@ -2792,6 +3043,7 @@ function PropertyFields({
   form,
   includeBuiltArea = false,
   includeFloor = false,
+  includeLandArea = true,
   isLookingUpCep = false,
   isEstimatingValue = false,
   onFieldChange,
@@ -2869,67 +3121,45 @@ function PropertyFields({
         <small className="assets-address-preview">Endereço montado: {form.address}</small>
       ) : null}
 
-      <label htmlFor="property-estimated-value">{estimatedLabel}</label>
-      <input
-        id="property-estimated-value"
-        inputMode="decimal"
-        onChange={(event) => {
-          if (!estimatedReadOnly) {
-            onFieldChange('estimatedValue', event.target.value)
+      {includeLandArea || includeBuiltArea ? (
+        <div
+          className={
+            includeLandArea && includeBuiltArea ? 'assets-grid-two' : 'assets-grid-single'
           }
-        }}
-        placeholder={estimatedReadOnly ? 'Calculado automaticamente' : 'Ex: 450000'}
-        readOnly={estimatedReadOnly}
-        type="text"
-        value={form.estimatedValue}
-      />
-      {estimatedReadOnly ? (
-        <>
-          <small>
-            {isEstimatingValue
-              ? 'Calculando valor estimado por IA...'
-              : estimatedHint || 'O valor será calculado automaticamente por IA.'}
-          </small>
-          {estimatedConfidence !== null ? (
-            <small>Nível de confiança: {Math.round(estimatedConfidence * 100)}%</small>
+        >
+          {includeLandArea ? (
+            <div>
+              <label htmlFor="property-land-area">Metragem do terreno (m²)</label>
+              <input
+                id="property-land-area"
+                inputMode="decimal"
+                onChange={(event) => {
+                  onFieldChange('landArea', event.target.value)
+                }}
+                placeholder="Ex: 250"
+                type="text"
+                value={form.landArea}
+              />
+            </div>
           ) : null}
-          {estimatedError ? (
-            <small className="assets-feedback error">{estimatedError}</small>
-          ) : null}
-        </>
-      ) : null}
 
-      <div className="assets-grid-two">
-        <div>
-          <label htmlFor="property-land-area">Metragem do terreno (m²)</label>
-          <input
-            id="property-land-area"
-            inputMode="decimal"
-            onChange={(event) => {
-              onFieldChange('landArea', event.target.value)
-            }}
-            placeholder="Ex: 250"
-            type="text"
-            value={form.landArea}
-          />
+          {includeBuiltArea ? (
+            <div>
+              <label htmlFor="property-built-area">Área construída (m²)</label>
+              <input
+                id="property-built-area"
+                inputMode="decimal"
+                onChange={(event) => {
+                  onFieldChange('builtArea', event.target.value)
+                }}
+                placeholder="Ex: 180"
+                type="text"
+                value={form.builtArea}
+              />
+            </div>
+          ) : null}
         </div>
-
-        {includeBuiltArea ? (
-          <div>
-            <label htmlFor="property-built-area">Área construída (m²)</label>
-            <input
-              id="property-built-area"
-              inputMode="decimal"
-              onChange={(event) => {
-                onFieldChange('builtArea', event.target.value)
-              }}
-              placeholder="Ex: 180"
-              type="text"
-              value={form.builtArea}
-            />
-          </div>
-        ) : null}
-      </div>
+      ) : null}
 
       <div className="assets-grid-two">
         <div>
@@ -2987,6 +3217,36 @@ function PropertyFields({
         rows={4}
         value={form.description}
       />
+
+      <label htmlFor="property-estimated-value">{estimatedLabel}</label>
+      <input
+        id="property-estimated-value"
+        inputMode="decimal"
+        onChange={(event) => {
+          if (!estimatedReadOnly) {
+            onFieldChange('estimatedValue', event.target.value)
+          }
+        }}
+        placeholder={estimatedReadOnly ? 'Calculado automaticamente' : 'Ex: 450000'}
+        readOnly={estimatedReadOnly}
+        type="text"
+        value={form.estimatedValue}
+      />
+      {estimatedReadOnly ? (
+        <>
+          <small>
+            {isEstimatingValue
+              ? 'Calculando valor estimado por IA...'
+              : estimatedHint || 'O valor será calculado automaticamente por IA.'}
+          </small>
+          {estimatedConfidence !== null ? (
+            <small>Nível de confiança: {Math.round(estimatedConfidence * 100)}%</small>
+          ) : null}
+          {estimatedError ? (
+            <small className="assets-feedback error">{estimatedError}</small>
+          ) : null}
+        </>
+      ) : null}
     </>
   )
 }
@@ -3036,6 +3296,7 @@ function PhotoUploader({
     </div>
   )
 }
+
 
 
 

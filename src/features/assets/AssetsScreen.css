@@ -303,6 +303,11 @@
   gap: 11px;
 }
 
+.assets-grid-single {
+  display: grid;
+  gap: 11px;
+}
+
 .assets-photo-field {
   display: grid;
   gap: 8px;
@@ -381,6 +386,22 @@
   color: var(--headline);
   font-weight: 700;
   cursor: pointer;
+}
+
+.assets-delete {
+  border: 1px solid rgba(185, 61, 49, 0.36);
+  border-radius: 12px;
+  padding: 11px 14px;
+  background: rgba(185, 61, 49, 0.1);
+  color: #9f3128;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assets-cancel:disabled,
+.assets-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .assets-list-card {
@@ -465,12 +486,29 @@
 }
 
 .asset-edit {
-  margin-top: 10px;
   border: 1px solid rgba(30, 41, 59, 0.18);
   border-radius: 10px;
   padding: 8px 10px;
   background: #ffffff;
   color: var(--headline);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.asset-item-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.asset-delete {
+  border: 1px solid rgba(185, 61, 49, 0.36);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(185, 61, 49, 0.1);
+  color: #9f3128;
   font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;

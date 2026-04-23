@@ -1,7 +1,16 @@
-import type { AddressData, LoginCredentials, RegisterPayload } from './types'
+import type { LoginCredentials, RegisterPayload } from './types'
+
+interface StoredAddress {
+  cep: string
+  city: string
+  complement: string
+  number: string
+  state: string
+  street: string
+}
 
 interface StoredAccount {
-  address: AddressData
+  address?: StoredAddress
   confirmationEmailSentAt?: string
   createdAt: string
   email: string
@@ -17,14 +26,6 @@ const LEGACY_DEMO_EMAIL = 'demo@permutamatch.com'
 
 const seedAccounts: StoredAccount[] = [
   {
-    address: {
-      cep: '01001000',
-      city: 'São Paulo',
-      complement: '',
-      number: '100',
-      state: 'SP',
-      street: 'Praça da Sé',
-    },
     createdAt: new Date().toISOString(),
     email: DEMO_EMAIL,
     name: 'Conta Demo',
@@ -38,7 +39,7 @@ const wait = (milliseconds = 900): Promise<void> =>
     window.setTimeout(resolve, milliseconds)
   })
 
-function normalizeAddress(address: unknown): AddressData {
+function normalizeAddress(address: unknown): StoredAddress {
   if (typeof address === 'string') {
     return {
       cep: '',
@@ -50,7 +51,7 @@ function normalizeAddress(address: unknown): AddressData {
     }
   }
 
-  const value = (address ?? {}) as Partial<AddressData>
+  const value = (address ?? {}) as Partial<StoredAddress>
 
   return {
     cep: value.cep?.trim() ?? '',
@@ -67,7 +68,7 @@ function normalizeStoredAccount(account: unknown): StoredAccount {
   const normalizedEmail = normalizeEmail(value.email ?? '')
 
   return {
-    address: normalizeAddress(value.address),
+    address: value.address ? normalizeAddress(value.address) : undefined,
     confirmationEmailSentAt: value.confirmationEmailSentAt,
     createdAt: value.createdAt ?? new Date().toISOString(),
     email: normalizedEmail === LEGACY_DEMO_EMAIL ? DEMO_EMAIL : normalizedEmail,
@@ -194,14 +195,6 @@ export const authService = {
     const confirmation = await sendConfirmationEmail(payload.name.trim(), email)
 
     const nextAccount: StoredAccount = {
-      address: {
-        cep: payload.address.cep.trim(),
-        city: payload.address.city.trim(),
-        complement: payload.address.complement.trim(),
-        number: payload.address.number.trim(),
-        state: payload.address.state.trim().toUpperCase(),
-        street: payload.address.street.trim(),
-      },
       confirmationEmailSentAt: confirmation.sentAt,
       createdAt: new Date().toISOString(),
       email,
