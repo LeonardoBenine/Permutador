@@ -11,7 +11,9 @@ interface StoredAddress {
 
 interface StoredAccount {
   address?: StoredAddress
+  confirmedAt?: string
   confirmationEmailSentAt?: string
+  confirmationToken?: string
   createdAt: string
   email: string
   name: string
@@ -69,7 +71,13 @@ function normalizeStoredAccount(account: unknown): StoredAccount {
 
   return {
     address: value.address ? normalizeAddress(value.address) : undefined,
+    confirmedAt:
+      value.confirmedAt ??
+      (normalizedEmail === DEMO_EMAIL || value.provider === 'google'
+        ? value.createdAt ?? new Date().toISOString()
+        : undefined),
     confirmationEmailSentAt: value.confirmationEmailSentAt,
+    confirmationToken: value.confirmationToken,
     createdAt: value.createdAt ?? new Date().toISOString(),
     email: normalizedEmail === LEGACY_DEMO_EMAIL ? DEMO_EMAIL : normalizedEmail,
     name: value.name?.trim() || 'Usuário',
@@ -115,14 +123,26 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
 }
 
-async function sendConfirmationEmail(name: string, email: string) {
+function createConfirmationToken(): string {
+  return crypto.randomUUID()
+}
+
+function createConfirmationUrl(token: string): string {
+  return `${window.location.origin}${window.location.pathname}?confirmEmail=${encodeURIComponent(token)}`
+}
+
+async function sendConfirmationEmail(name: string, email: string, token: string) {
   const apiUrl = import.meta.env.VITE_CONFIRMATION_EMAIL_API_URL as
     | string
     | undefined
 
   if (apiUrl) {
     const response = await fetch(apiUrl, {
-      body: JSON.stringify({ email, name }),
+      body: JSON.stringify({
+        confirmationUrl: createConfirmationUrl(token),
+        email,
+        name,
+      }),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -158,6 +178,40 @@ async function sendConfirmationEmail(name: string, email: string) {
 }
 
 export const authService = {
+  confirmEmail(token: string) {
+    const normalizedToken = token.trim()
+
+    if (!normalizedToken) {
+      throw new Error('Link de confirmação inválido.')
+    }
+
+    const accounts = readAccounts()
+    const account = accounts.find((item) => item.confirmationToken === normalizedToken)
+
+    if (!account) {
+      throw new Error('Link de confirmação inválido ou expirado.')
+    }
+
+    const confirmedAt = new Date().toISOString()
+    const nextAccounts = accounts.map((item) =>
+      item.confirmationToken === normalizedToken
+        ? {
+            ...item,
+            confirmedAt,
+            confirmationToken: undefined,
+          }
+        : item,
+    )
+
+    writeAccounts(nextAccounts)
+
+    return {
+      confirmedAt,
+      email: account.email,
+      name: account.name,
+    }
+  },
+
   async login(payload: LoginCredentials) {
     await wait()
 
@@ -173,6 +227,10 @@ export const authService = {
       throw new Error(
         'Sua conta ainda não possui senha. Clique em "Esqueci minha senha" para definir.',
       )
+    }
+
+    if (!account.confirmedAt) {
+      throw new Error('Confirme seu e-mail antes de entrar. Enviamos o link no cadastro.')
     }
 
     if (payload.password !== account.password) {
@@ -196,10 +254,16 @@ export const authService = {
       throw new Error('Esse e-mail já possui cadastro.')
     }
 
-    const confirmation = await sendConfirmationEmail(payload.name.trim(), email)
+    const confirmationToken = createConfirmationToken()
+    const confirmation = await sendConfirmationEmail(
+      payload.name.trim(),
+      email,
+      confirmationToken,
+    )
 
     const nextAccount: StoredAccount = {
       confirmationEmailSentAt: confirmation.sentAt,
+      confirmationToken,
       createdAt: new Date().toISOString(),
       email,
       name: payload.name.trim(),

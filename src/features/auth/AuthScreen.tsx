@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import brandLogo from '../../assets/logo-permutador-oficial.png'
 import { authService } from './authService'
@@ -20,12 +20,12 @@ const modeContent: Record<AuthMode, { title: string; subtitle: string }> = {
   },
   login: {
     subtitle:
-      'Entre na sua conta para continuar negociando ativos com segurança.',
+      'Entre na sua conta para continuar negociando ativos com seguranÃ§a.',
     title: 'Bem-vindo de volta',
   },
   register: {
     subtitle:
-      'Crie sua conta com senha e confirmação por e-mail.',
+      'Crie sua conta com senha e confirmaÃ§Ã£o por e-mail.',
     title: 'Crie sua conta',
   },
 }
@@ -58,6 +58,35 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
   const activeMode = useMemo(() => modeContent[mode], [mode])
 
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('confirmEmail')
+
+    if (!token) {
+      return
+    }
+
+    try {
+      const result = authService.confirmEmail(token)
+
+      setMode('login')
+      setLoginForm((previous) => ({
+        ...previous,
+        email: result.email,
+      }))
+      setFeedback({
+        text: `E-mail confirmado para ${result.name}. Agora vocÃª jÃ¡ pode entrar.`,
+        tone: 'success',
+      })
+    } catch (error) {
+      setFeedback({
+        text: (error as Error).message,
+        tone: 'error',
+      })
+    } finally {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
   function changeMode(nextMode: AuthMode) {
     setMode(nextMode)
     setFeedback(null)
@@ -68,7 +97,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(loginForm.email)) {
       setFeedback({
-        text: 'Digite um e-mail válido para entrar.',
+        text: 'Digite um e-mail vÃ¡lido para entrar.',
         tone: 'error',
       })
       return
@@ -90,7 +119,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const result = await authService.login(loginForm)
 
       setFeedback({
-        text: `Login realizado com sucesso. Olá, ${result.name}!`,
+        text: `Login realizado com sucesso. OlÃ¡, ${result.name}!`,
         tone: 'success',
       })
       onAuthenticated?.({ email: result.email, name: result.name })
@@ -117,7 +146,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(registerForm.email)) {
       setFeedback({
-        text: 'Digite um e-mail válido para criar conta.',
+        text: 'Digite um e-mail vÃ¡lido para criar conta.',
         tone: 'error',
       })
       return
@@ -135,7 +164,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (registerForm.password !== registerForm.confirmPassword) {
       setFeedback({
-        text: 'As senhas não conferem. Digite novamente.',
+        text: 'As senhas nÃ£o conferem. Digite novamente.',
         tone: 'error',
       })
       return
@@ -159,7 +188,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       setRegisterForm(initialRegisterForm)
       changeMode('login')
       setFeedback({
-        text: `Conta criada para ${result.name}. Enviamos e-mail de confirmação para ${result.email}.`,
+        text: `Conta criada para ${result.name}. Enviamos um link de confirmação para ${result.email}. Confirme o e-mail antes de entrar.`,
         tone: 'success',
       })
     } catch (error) {
@@ -177,7 +206,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
     if (!isValidEmail(forgotEmail)) {
       setFeedback({
-        text: 'Digite um e-mail válido para recuperar a senha.',
+        text: 'Digite um e-mail vÃ¡lido para recuperar a senha.',
         tone: 'error',
       })
       return
@@ -196,7 +225,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
       changeMode('login')
       setFeedback({
-        text: `Enviamos a redefinição para ${forgotEmail}. Em ambiente local, use senha temporária ${result.temporaryPassword}.`,
+        text: `Enviamos a redefiniÃ§Ã£o para ${forgotEmail}. Em ambiente local, use senha temporÃ¡ria ${result.temporaryPassword}.`,
         tone: 'info',
       })
       setForgotEmail('')
@@ -213,7 +242,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const provider = await authService.signInWithGoogle()
 
       setFeedback({
-        text: `Conexão com ${provider.provider} iniciada com sucesso.`,
+        text: `ConexÃ£o com ${provider.provider} iniciada com sucesso.`,
         tone: 'success',
       })
       onAuthenticated?.({ email: provider.email, name: provider.name })
@@ -233,21 +262,21 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             <img className="auth-brand-logo" src={brandLogo} alt="Logo Permutador" />
           </div>
 
-          <h2>Trocas inteligentes para quem quer agilidade e confiança</h2>
+          <h2>Trocas inteligentes para quem quer agilidade e confianÃ§a</h2>
           <p>
             Acesse, negocie e acompanhe oportunidades de permuta com uma
-            experiência moderna e intuitiva.
+            experiÃªncia moderna e intuitiva.
           </p>
 
           <ul>
             <li>Login por e-mail e senha</li>
-            <li>Recuperação de senha por e-mail</li>
-            <li>Cadastro com confirmação de senha</li>
-            <li>E-mail de confirmação após criar conta</li>
+            <li>RecuperaÃ§Ã£o de senha por e-mail</li>
+            <li>Cadastro com confirmaÃ§Ã£o de senha</li>
+            <li>E-mail de confirmaÃ§Ã£o apÃ³s criar conta</li>
           </ul>
 
           <div className="auth-demo-box">
-            <span>Conta de demonstração</span>
+            <span>Conta de demonstraÃ§Ã£o</span>
             <strong>demo@permutador.com.br</strong>
             <small>Senha: 123456</small>
           </div>
@@ -255,7 +284,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
 
         <section className="auth-card" aria-live="polite">
           <header>
-            <p className="auth-card-eyebrow">Autenticação</p>
+            <p className="auth-card-eyebrow">AutenticaÃ§Ã£o</p>
             <h1>{activeMode.title}</h1>
             <p>{activeMode.subtitle}</p>
           </header>
@@ -419,7 +448,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
               />
 
               <button className="auth-primary" disabled={isSubmitting} type="submit">
-                {isSubmitting ? 'Enviando...' : 'Enviar e-mail de redefinição'}
+                {isSubmitting ? 'Enviando...' : 'Enviar e-mail de redefiniÃ§Ã£o'}
               </button>
 
               <button
@@ -461,3 +490,4 @@ function GoogleIcon() {
     </svg>
   )
 }
+

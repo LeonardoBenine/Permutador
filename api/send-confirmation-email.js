@@ -27,12 +27,17 @@ export default async function handler(request, response) {
     })
   }
 
-  const { email = '', name = '' } = request.body ?? {}
+  const { confirmationUrl = '', email = '', name = '' } = request.body ?? {}
   const normalizedEmail = String(email).trim().toLowerCase()
   const safeName = escapeHtml(String(name).trim() || 'novo usuario')
+  const safeConfirmationUrl = String(confirmationUrl).trim()
 
   if (!isValidEmail(normalizedEmail)) {
     return response.status(400).json({ error: 'Invalid email.' })
+  }
+
+  if (!safeConfirmationUrl.startsWith('http')) {
+    return response.status(400).json({ error: 'Invalid confirmation URL.' })
   }
 
   const resendResponse = await fetch('https://api.resend.com/emails', {
@@ -42,12 +47,19 @@ export default async function handler(request, response) {
       <main style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
         <h1 style="color: #f26b25;">Bem-vindo ao Permutador</h1>
         <p>Olá, ${safeName}.</p>
-        <p>Seu cadastro foi criado com sucesso. Você já pode entrar no Permutador e começar a cadastrar seus carros para encontrar oportunidades de permuta.</p>
+        <p>Seu cadastro foi criado com sucesso. Confirme seu e-mail para ativar sua conta no Permutador.</p>
+        <p>
+          <a href="${escapeHtml(safeConfirmationUrl)}" style="display:inline-block;background:#f26b25;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">
+            Confirmar meu e-mail
+          </a>
+        </p>
+        <p>Se o botão não abrir, copie e cole este link no navegador:</p>
+        <p style="word-break:break-all;color:#475569;">${escapeHtml(safeConfirmationUrl)}</p>
         <p style="margin-top: 24px;">Equipe Permutador</p>
       </main>
     `,
-      subject: 'Confirmação de cadastro no Permutador',
-      text: `Olá, ${String(name).trim() || 'novo usuario'}.\n\nSeu cadastro foi criado com sucesso. Você já pode entrar no Permutador e começar a cadastrar seus carros para encontrar oportunidades de permuta.\n\nEquipe Permutador`,
+      subject: 'Confirme seu cadastro no Permutador',
+      text: `Olá, ${String(name).trim() || 'novo usuario'}.\n\nSeu cadastro foi criado com sucesso. Confirme seu e-mail para ativar sua conta no Permutador:\n${safeConfirmationUrl}\n\nEquipe Permutador`,
       to: [normalizedEmail],
     }),
     headers: {
