@@ -133,10 +133,14 @@ async function sendConfirmationEmail(name: string, email: string) {
       throw new Error('Não foi possível enviar o e-mail de confirmação.')
     }
 
-    const sentAt = new Date().toISOString()
+    const result = (await response.json()) as {
+      id?: string
+      sentAt?: string
+    }
+    const sentAt = result.sentAt ?? new Date().toISOString()
 
     return {
-      messageId: `api-confirm-${Date.now()}`,
+      messageId: result.id ?? `api-confirm-${Date.now()}`,
       sentAt,
       to: email,
       userName: name,
