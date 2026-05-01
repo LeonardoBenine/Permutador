@@ -1,14 +1,20 @@
 ﻿import type { AuthUser } from '../auth/types'
 import type {
+  AssetCompatibility,
+  AssetMatchRecord,
+  AssetProposalRecord,
+  CarAsset,
   AssetRecord,
   AssetSwipeRecord,
-  AssetType,
   EstimatedValueAudit,
+  MatchStatus,
   SwipeDecision,
 } from './types'
 
 const ASSETS_STORAGE_KEY = 'permutador.assets'
 const SWIPES_STORAGE_KEY = 'permutador.asset-swipes'
+const MATCHES_STORAGE_KEY = 'permutador.asset-matches'
+const PROPOSALS_STORAGE_KEY = 'permutador.asset-proposals'
 const ACCOUNTS_STORAGE_KEY = 'permutamatch.auth.accounts'
 const FIPE_API_BASE_URL = 'https://parallelum.com.br/fipe/api/v2'
 
@@ -25,55 +31,65 @@ const marketplaceSeedAssets: AssetRecord[] = [
     model: 'Compass Longitude',
     ownerEmail: 'marcos.silva@market.permutador',
     ownerName: 'Marcos Silva',
-    photos: [],
+    photos: [
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Jeep%20Compass%20Limited%204WD%20in%20Billet%20Silver%20Metallic%2C%20front%20left.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/Jeep%20Compass%204Xe%20%282021%29%20%2852920812113%29.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Jeep%20Compass%20Nighteagle%20Multiair%204x2.jpg',
+    ],
     state: 'SP',
     type: 'car',
     year: 2021,
   },
   {
-    address: 'Rua das Acacias, 150 - Campinas/SP',
-    bathrooms: 3,
-    bedrooms: 4,
-    builtArea: 215,
-    createdAt: '2026-02-21T10:30:00.000Z',
-    description: 'Casa em condominio fechado com espaco gourmet.',
-    estimatedValue: 890000,
-    id: 'seed-house-campinas',
-    landArea: 360,
-    ownerEmail: 'renata.costa@market.permutador',
-    ownerName: 'Renata Costa',
+    brand: 'Honda',
+    cep: '04094050',
+    city: 'Sao Paulo',
+    createdAt: '2026-03-24T11:40:00.000Z',
+    description: 'HR-V EXL com baixa km, bancos em couro e revisoes carimbadas.',
+    estimatedValue: 137000,
+    id: 'seed-car-honda-hrv',
+    mileage: 28000,
+    model: 'HR-V EXL',
+    ownerEmail: 'ana.ribeiro@market.permutador',
+    ownerName: 'Ana Ribeiro',
     photos: [],
-    type: 'house',
+    state: 'SP',
+    type: 'car',
+    year: 2022,
   },
   {
-    address: 'Av. Beira Mar, 880 - Florianopolis/SC',
-    bathrooms: 2,
-    bedrooms: 3,
-    builtArea: 120,
-    createdAt: '2026-03-14T09:15:00.000Z',
-    description: 'Apartamento com vista para o mar e vaga dupla.',
-    estimatedValue: 1250000,
-    floor: 11,
-    id: 'seed-apartment-florianopolis',
-    landArea: 120,
-    ownerEmail: 'camila.souza@market.permutador',
-    ownerName: 'Camila Souza',
+    brand: 'Volkswagen',
+    cep: '30140071',
+    city: 'Belo Horizonte',
+    createdAt: '2026-03-18T16:10:00.000Z',
+    description: 'T-Cross Comfortline com multimidia, pneus novos e IPVA pago.',
+    estimatedValue: 119500,
+    id: 'seed-car-vw-tcross',
+    mileage: 41000,
+    model: 'T-Cross Comfortline',
+    ownerEmail: 'bruno.almeida@market.permutador',
+    ownerName: 'Bruno Almeida',
     photos: [],
-    type: 'apartment',
+    state: 'MG',
+    type: 'car',
+    year: 2021,
   },
   {
-    address: 'Estrada do Sossego, 0 - Atibaia/SP',
-    bathrooms: 0,
-    bedrooms: 0,
-    createdAt: '2026-01-18T18:45:00.000Z',
-    description: 'Terreno plano em area de expansao urbana.',
-    estimatedValue: 390000,
-    id: 'seed-land-atibaia',
-    landArea: 600,
-    ownerEmail: 'paulo.nunes@market.permutador',
-    ownerName: 'Paulo Nunes',
+    brand: 'Toyota',
+    cep: '80010010',
+    city: 'Curitiba',
+    createdAt: '2026-03-11T09:25:00.000Z',
+    description: 'Corolla Altis Hybrid, unico dono, consumo excelente.',
+    estimatedValue: 158000,
+    id: 'seed-car-toyota-corolla-altis',
+    mileage: 36000,
+    model: 'Corolla Altis Hybrid',
+    ownerEmail: 'carla.mendes@market.permutador',
+    ownerName: 'Carla Mendes',
     photos: [],
-    type: 'land',
+    state: 'PR',
+    type: 'car',
+    year: 2021,
   },
 ]
 
@@ -200,17 +216,30 @@ function formatFactorPercent(value: number): string {
   return `${value >= 0 ? '+' : ''}${percent}%`
 }
 
-function createSeedPhoto(label: string, accentColor: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520"><defs><linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="${accentColor}"/><stop offset="100%" stop-color="#1b1f2a"/></linearGradient></defs><rect width="800" height="520" fill="url(#bg)"/><text x="50%" y="48%" fill="white" font-family="Arial, sans-serif" font-size="56" text-anchor="middle">${label}</text><text x="50%" y="60%" fill="white" fill-opacity="0.8" font-family="Arial, sans-serif" font-size="26" text-anchor="middle">PermutaMatch</text></svg>`
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-}
+const GENERIC_CAR_PHOTOS = [
+  'https://commons.wikimedia.org/wiki/Special:FilePath/2020%20Toyota%20Corolla%20SE.jpg',
+  'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Toyota%20Corolla%20LE%2C%20Front%20Right%2C%2010-19-2020.jpg',
+  'https://commons.wikimedia.org/wiki/Special:FilePath/2017%20Toyota%20Corolla%2C%20Front%20Right%2C%2009-16-2020.jpg',
+]
 
-const TEST_USER_SEED_PHOTOS: Record<AssetType, string> = {
-  apartment: createSeedPhoto('Apartamento', '#6b46c1'),
-  car: createSeedPhoto('Carro', '#0f766e'),
-  house: createSeedPhoto('Casa', '#b45309'),
-  land: createSeedPhoto('Terreno', '#15803d'),
-}
+const CAR_PHOTOS_BY_KEY: Array<{ key: string; photos: string[] }> = [
+  {
+    key: 'jeep compass',
+    photos: [
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Jeep%20Compass%20Limited%204WD%20in%20Billet%20Silver%20Metallic%2C%20front%20left.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/Jeep%20Compass%204Xe%20%282021%29%20%2852920812113%29.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Jeep%20Compass%20Nighteagle%20Multiair%204x2.jpg',
+    ],
+  },
+  {
+    key: 'toyota corolla',
+    photos: [
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2020%20Toyota%20Corolla%20SE.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/2021%20Toyota%20Corolla%20LE%2C%20Front%20Right%2C%2010-19-2020.jpg',
+      'https://commons.wikimedia.org/wiki/Special:FilePath/Toyota%20Corolla%201.8%20XLi%202020%20%2850342863088%29.jpg',
+    ],
+  },
+]
 
 const wait = (milliseconds = 500): Promise<void> =>
   new Promise((resolve) => {
@@ -336,6 +365,43 @@ function shouldRepairCarModel(value: string): boolean {
   return false
 }
 
+function getCarPhotoSet(asset: Pick<CarAsset, 'brand' | 'model'>): string[] {
+  const normalizedDescriptor = `${asset.brand} ${asset.model}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+
+  const matchedPhotoSet = CAR_PHOTOS_BY_KEY.find((entry) =>
+    normalizedDescriptor.includes(entry.key),
+  )
+
+  return matchedPhotoSet?.photos ?? GENERIC_CAR_PHOTOS
+}
+
+function ensureCarPhotos(asset: CarAsset): CarAsset {
+  const currentPhotos = Array.isArray(asset.photos)
+    ? asset.photos.filter(
+        (item: string): item is string => typeof item === 'string' && item.trim().length > 0,
+      )
+    : []
+  const nextPhotos = [...currentPhotos]
+
+  for (const photo of getCarPhotoSet(asset)) {
+    if (nextPhotos.length >= 3) {
+      break
+    }
+    if (!nextPhotos.includes(photo)) {
+      nextPhotos.push(photo)
+    }
+  }
+
+  return {
+    ...asset,
+    photos: nextPhotos.slice(0, Math.max(3, nextPhotos.length)),
+  }
+}
+
 function normalizeAsset(value: unknown): AssetRecord | null {
   if (!value || typeof value !== 'object') {
     return null
@@ -347,6 +413,10 @@ function normalizeAsset(value: unknown): AssetRecord | null {
   }
 
   if (!asset.type || !asset.id || !asset.createdAt || !asset.ownerEmail || !asset.ownerName) {
+    return null
+  }
+
+  if (asset.type !== 'car') {
     return null
   }
 
@@ -390,17 +460,13 @@ function normalizeAsset(value: unknown): AssetRecord | null {
       : [],
   }
 
-  if (asset.type === 'car') {
-    return {
-      ...normalizedAsset,
-      cep: normalizedCep,
-      city: normalizedCity,
-      model: normalizedCarModel,
-      state: normalizedState,
-    } as AssetRecord
-  }
-
-  return normalizedAsset
+  return ensureCarPhotos({
+    ...(normalizedAsset as CarAsset),
+    cep: normalizedCep,
+    city: normalizedCity,
+    model: normalizedCarModel,
+    state: normalizedState,
+  })
 }
 
 function normalizeSwipe(value: unknown): AssetSwipeRecord | null {
@@ -431,6 +497,115 @@ function normalizeSwipe(value: unknown): AssetSwipeRecord | null {
     ownerEmail: swipe.ownerEmail.trim().toLowerCase(),
     ownAssetId: swipe.ownAssetId,
     targetAssetId: swipe.targetAssetId,
+  }
+}
+
+function normalizeCompatibility(value: unknown): AssetCompatibility | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const compatibility = value as Partial<AssetCompatibility>
+  const explanations = Array.isArray(compatibility.explanations)
+    ? compatibility.explanations.filter((item): item is string => typeof item === 'string')
+    : []
+
+  const requiredNumbers = [
+    compatibility.distanceScore,
+    compatibility.locationScore,
+    compatibility.mileageScore,
+    compatibility.priceDelta,
+    compatibility.priceDeltaPercent,
+    compatibility.priceScore,
+    compatibility.score,
+    compatibility.yearScore,
+  ]
+
+  if (!requiredNumbers.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+    return null
+  }
+
+  return {
+    distanceScore: compatibility.distanceScore ?? 0,
+    explanations,
+    locationScore: compatibility.locationScore ?? 0,
+    mileageScore: compatibility.mileageScore ?? 0,
+    priceDelta: compatibility.priceDelta ?? 0,
+    priceDeltaPercent: compatibility.priceDeltaPercent ?? 0,
+    priceScore: compatibility.priceScore ?? 0,
+    score: compatibility.score ?? 0,
+    yearScore: compatibility.yearScore ?? 0,
+  }
+}
+
+function normalizeMatch(value: unknown): AssetMatchRecord | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const match = value as Partial<AssetMatchRecord>
+  const validStatuses: MatchStatus[] = ['new', 'negotiating', 'declined', 'closed']
+  const rawStatus = String((value as { status?: unknown }).status ?? '')
+  const normalizedStatus =
+    rawStatus === 'interest_sent' || rawStatus === 'mutual'
+      ? 'new'
+      : rawStatus
+  const compatibility = normalizeCompatibility(match.compatibility)
+
+  if (
+    !match.id ||
+    !match.createdAt ||
+    !match.updatedAt ||
+    !match.ownerEmail ||
+    !match.ownAssetId ||
+    !match.targetAssetId ||
+    !match.targetOwnerEmail ||
+    !compatibility ||
+    !validStatuses.includes(normalizedStatus as MatchStatus)
+  ) {
+    return null
+  }
+
+  return {
+    compatibility,
+    createdAt: match.createdAt,
+    id: match.id,
+    ownerEmail: normalizeEmail(match.ownerEmail),
+    ownAssetId: match.ownAssetId,
+    status: normalizedStatus as MatchStatus,
+    targetAssetId: match.targetAssetId,
+    targetOwnerEmail: normalizeEmail(match.targetOwnerEmail),
+    updatedAt: match.updatedAt,
+  }
+}
+
+function normalizeProposal(value: unknown): AssetProposalRecord | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const proposal = value as Partial<AssetProposalRecord>
+
+  if (
+    !proposal.id ||
+    !proposal.matchId ||
+    !proposal.ownerEmail ||
+    !proposal.createdAt ||
+    !proposal.updatedAt ||
+    typeof proposal.cashAdjustment !== 'number' ||
+    !Number.isFinite(proposal.cashAdjustment)
+  ) {
+    return null
+  }
+
+  return {
+    cashAdjustment: Math.max(0, proposal.cashAdjustment),
+    createdAt: proposal.createdAt,
+    id: proposal.id,
+    matchId: proposal.matchId,
+    notes: typeof proposal.notes === 'string' ? proposal.notes : '',
+    ownerEmail: normalizeEmail(proposal.ownerEmail),
+    updatedAt: proposal.updatedAt,
   }
 }
 
@@ -484,8 +659,178 @@ function writeSwipes(swipes: AssetSwipeRecord[]) {
   localStorage.setItem(SWIPES_STORAGE_KEY, JSON.stringify(swipes))
 }
 
+function readMatches(): AssetMatchRecord[] {
+  const serialized = localStorage.getItem(MATCHES_STORAGE_KEY)
+
+  if (!serialized) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(serialized) as unknown[]
+    const normalized = parsed
+      .map((item) => normalizeMatch(item))
+      .filter((item): item is AssetMatchRecord => Boolean(item))
+
+    writeMatches(normalized)
+
+    return normalized
+  } catch {
+    return []
+  }
+}
+
+function writeMatches(matches: AssetMatchRecord[]) {
+  localStorage.setItem(MATCHES_STORAGE_KEY, JSON.stringify(matches))
+}
+
+function readProposals(): AssetProposalRecord[] {
+  const serialized = localStorage.getItem(PROPOSALS_STORAGE_KEY)
+
+  if (!serialized) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(serialized) as unknown[]
+    const normalized = parsed
+      .map((item) => normalizeProposal(item))
+      .filter((item): item is AssetProposalRecord => Boolean(item))
+
+    writeProposals(normalized)
+
+    return normalized
+  } catch {
+    return []
+  }
+}
+
+function writeProposals(proposals: AssetProposalRecord[]) {
+  localStorage.setItem(PROPOSALS_STORAGE_KEY, JSON.stringify(proposals))
+}
+
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase()
+}
+
+function calculateCarCompatibility(ownAsset: CarAsset, targetAsset: CarAsset): AssetCompatibility {
+  const ownValue = Math.max(ownAsset.estimatedValue, 1)
+  const targetValue = Math.max(targetAsset.estimatedValue, 1)
+  const priceDelta = targetValue - ownValue
+  const priceDeltaPercent = priceDelta / ownValue
+  const absPriceDeltaPercent = Math.abs(priceDeltaPercent)
+  const priceScore = clamp(1 - absPriceDeltaPercent / 0.35, 0, 1)
+
+  const locationScore =
+    ownAsset.state === targetAsset.state
+      ? normalizeComparableText(ownAsset.city) === normalizeComparableText(targetAsset.city)
+        ? 1
+        : 0.72
+      : 0.35
+
+  const yearDiff = Math.abs(ownAsset.year - targetAsset.year)
+  const yearScore = clamp(1 - yearDiff / 8, 0, 1)
+  const mileageDiff = Math.abs(ownAsset.mileage - targetAsset.mileage)
+  const mileageScore = clamp(1 - mileageDiff / 120000, 0, 1)
+  const distanceScore = locationScore
+  const score = Math.round(
+    (priceScore * 0.42 + locationScore * 0.24 + yearScore * 0.18 + mileageScore * 0.16) *
+      100,
+  )
+  const explanations: string[] = []
+
+  if (absPriceDeltaPercent <= 0.08) {
+    explanations.push('Valores estimados muito próximos')
+  } else if (priceDelta > 0) {
+    explanations.push(`Candidato vale ${formatCurrencyLabel(Math.abs(priceDelta))} a mais`)
+  } else {
+    explanations.push(`Seu carro vale ${formatCurrencyLabel(Math.abs(priceDelta))} a mais`)
+  }
+
+  if (locationScore === 1) {
+    explanations.push(`Mesma cidade: ${ownAsset.city}/${ownAsset.state}`)
+  } else if (ownAsset.state === targetAsset.state) {
+    explanations.push(`Mesma UF: ${ownAsset.state}`)
+  } else {
+    explanations.push(`UFs diferentes: ${ownAsset.state} e ${targetAsset.state}`)
+  }
+
+  if (yearDiff <= 1) {
+    explanations.push('Ano de fabricação compatível')
+  }
+
+  if (targetAsset.mileage <= ownAsset.mileage) {
+    explanations.push('Candidato com km igual ou menor')
+  }
+
+  return {
+    distanceScore,
+    explanations: explanations.slice(0, 4),
+    locationScore,
+    mileageScore,
+    priceDelta,
+    priceDeltaPercent,
+    priceScore,
+    score,
+    yearScore,
+  }
+}
+
+function createMatchId(ownAssetId: string, targetAssetId: string): string {
+  return `match:${[ownAssetId, targetAssetId].sort().join(':')}`
+}
+
+function findReciprocalLike(swipes: AssetSwipeRecord[], ownAssetId: string, targetAssetId: string) {
+  return swipes.find(
+    (swipe) =>
+      swipe.decision === 'like' &&
+      swipe.ownAssetId === targetAssetId &&
+      swipe.targetAssetId === ownAssetId,
+  )
+}
+
+function upsertMatchForSwipe(payload: {
+  compatibility: AssetCompatibility
+  currentSwipes: AssetSwipeRecord[]
+  decision: SwipeDecision
+  ownerEmail: string
+  ownAsset: CarAsset
+  targetAsset: CarAsset
+}) {
+  const currentMatches = readMatches()
+  const matchId = createMatchId(payload.ownAsset.id, payload.targetAsset.id)
+  const existingMatch = currentMatches.find((match) => match.id === matchId)
+
+  if (payload.decision === 'pass') {
+    writeMatches(currentMatches.filter((match) => match.id !== matchId))
+    return null
+  }
+
+  const reciprocalLike = findReciprocalLike(
+    payload.currentSwipes,
+    payload.ownAsset.id,
+    payload.targetAsset.id,
+  )
+  const status: MatchStatus = reciprocalLike ? 'new' : existingMatch?.status ?? 'new'
+  const now = new Date().toISOString()
+  const nextMatch: AssetMatchRecord = {
+    compatibility: payload.compatibility,
+    createdAt: existingMatch?.createdAt ?? now,
+    id: matchId,
+    ownerEmail: normalizeEmail(payload.ownerEmail),
+    ownAssetId: payload.ownAsset.id,
+    status,
+    targetAssetId: payload.targetAsset.id,
+    targetOwnerEmail: normalizeEmail(payload.targetAsset.ownerEmail),
+    updatedAt: now,
+  }
+
+  writeMatches([
+    nextMatch,
+    ...currentMatches.filter((match) => match.id !== matchId),
+  ])
+
+  return nextMatch
 }
 
 function normalizeComparableText(value: string): string {
@@ -1482,7 +1827,7 @@ function buildTestUserSeedAssets(ownerEmail: string): AssetRecord[] {
   const ownerKey = normalizedOwnerEmail.replace(/[^a-z0-9]/g, '-')
 
   return [
-    {
+    ensureCarPhotos({
       brand: 'Toyota',
       cep: '01310930',
       city: 'Sao Paulo',
@@ -1494,56 +1839,11 @@ function buildTestUserSeedAssets(ownerEmail: string): AssetRecord[] {
       model: 'Corolla XEi',
       ownerEmail: normalizedOwnerEmail,
       ownerName: TEST_USER_OWNER_NAME,
-      photos: [TEST_USER_SEED_PHOTOS.car],
+      photos: [],
       state: 'SP',
       type: 'car',
       year: 2020,
-    },
-    {
-      address: 'Rua das Flores, 230 - Sao Paulo/SP',
-      bathrooms: 3,
-      bedrooms: 4,
-      builtArea: 180,
-      createdAt: '2026-04-02T10:00:00.000Z',
-      description: 'Casa com quintal amplo e espaco gourmet.',
-      estimatedValue: 950000,
-      id: `seed-${ownerKey}-house`,
-      landArea: 250,
-      ownerEmail: normalizedOwnerEmail,
-      ownerName: TEST_USER_OWNER_NAME,
-      photos: [TEST_USER_SEED_PHOTOS.house],
-      type: 'house',
-    },
-    {
-      address: 'Av. Paulista, 1500 - Sao Paulo/SP',
-      bathrooms: 2,
-      bedrooms: 3,
-      builtArea: 98,
-      createdAt: '2026-04-03T11:00:00.000Z',
-      description: 'Apartamento reformado com 2 vagas e varanda.',
-      estimatedValue: 780000,
-      floor: 14,
-      id: `seed-${ownerKey}-apartment`,
-      landArea: 98,
-      ownerEmail: normalizedOwnerEmail,
-      ownerName: TEST_USER_OWNER_NAME,
-      photos: [TEST_USER_SEED_PHOTOS.apartment],
-      type: 'apartment',
-    },
-    {
-      address: 'Estrada da Serra, 0 - Mairipora/SP',
-      bathrooms: 0,
-      bedrooms: 0,
-      createdAt: '2026-04-04T12:00:00.000Z',
-      description: 'Terreno plano com documentacao regularizada.',
-      estimatedValue: 330000,
-      id: `seed-${ownerKey}-land`,
-      landArea: 720,
-      ownerEmail: normalizedOwnerEmail,
-      ownerName: TEST_USER_OWNER_NAME,
-      photos: [TEST_USER_SEED_PHOTOS.land],
-      type: 'land',
-    },
+    }),
   ]
 }
 
@@ -1571,9 +1871,9 @@ function ensureTestUserSeedAssets(ownerEmail: string): AssetRecord[] {
 function listAssetsWithMarketplaceSeed(): AssetRecord[] {
   const fromStorage = readAssets()
   const registeredIds = new Set(fromStorage.map((asset) => asset.id))
-  const missingSeedAssets = marketplaceSeedAssets.filter(
-    (asset) => !registeredIds.has(asset.id),
-  )
+  const missingSeedAssets = marketplaceSeedAssets
+    .filter((asset) => !registeredIds.has(asset.id))
+    .map((asset) => (asset.type === 'car' ? ensureCarPhotos(asset) : asset))
 
   return [...fromStorage, ...missingSeedAssets]
 }
@@ -1602,6 +1902,27 @@ export const assetsService = {
       )
   },
 
+  listRankedMarketplaceAssets(ownerEmail: string, ownAsset?: AssetRecord | null) {
+    const normalizedEmail = normalizeEmail(ownerEmail)
+    const marketplaceAssets = listAssetsWithMarketplaceSeed()
+      .filter((asset) => normalizeEmail(asset.ownerEmail) !== normalizedEmail)
+
+    if (!ownAsset || ownAsset.type !== 'car') {
+      return marketplaceAssets.map((asset) => ({
+        asset,
+        compatibility: null,
+      }))
+    }
+
+    return marketplaceAssets
+      .filter((asset): asset is CarAsset => asset.type === 'car')
+      .map((asset) => ({
+        asset,
+        compatibility: calculateCarCompatibility(ownAsset, asset),
+      }))
+      .sort((a, b) => b.compatibility.score - a.compatibility.score)
+  },
+
   listSwipeDecisions(ownerEmail: string) {
     const normalizedEmail = normalizeEmail(ownerEmail)
 
@@ -1611,6 +1932,81 @@ export const assetsService = {
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       )
+  },
+
+  listMatches(ownerEmail: string) {
+    const normalizedEmail = normalizeEmail(ownerEmail)
+
+    return readMatches()
+      .filter(
+        (match) =>
+          match.ownerEmail === normalizedEmail || match.targetOwnerEmail === normalizedEmail,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+  },
+
+  listProposals(ownerEmail: string) {
+    const normalizedEmail = normalizeEmail(ownerEmail)
+
+    return readProposals()
+      .filter((proposal) => proposal.ownerEmail === normalizedEmail)
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      )
+  },
+
+  saveProposal(payload: {
+    cashAdjustment: number
+    matchId: string
+    notes: string
+    ownerEmail: string
+  }) {
+    const normalizedOwner = normalizeEmail(payload.ownerEmail)
+    const currentProposals = readProposals()
+    const existingProposal = currentProposals.find(
+      (proposal) =>
+        proposal.ownerEmail === normalizedOwner && proposal.matchId === payload.matchId,
+    )
+    const now = new Date().toISOString()
+    const nextProposal: AssetProposalRecord = {
+      cashAdjustment: Math.max(0, Math.round(payload.cashAdjustment)),
+      createdAt: existingProposal?.createdAt ?? now,
+      id: existingProposal?.id ?? crypto.randomUUID(),
+      matchId: payload.matchId,
+      notes: payload.notes.trim(),
+      ownerEmail: normalizedOwner,
+      updatedAt: now,
+    }
+
+    writeProposals([
+      nextProposal,
+      ...currentProposals.filter((proposal) => proposal.id !== nextProposal.id),
+    ])
+
+    this.updateMatchStatus(payload.matchId, 'negotiating')
+
+    return nextProposal
+  },
+
+  updateMatchStatus(matchId: string, status: MatchStatus) {
+    const currentMatches = readMatches()
+    const nextMatches = currentMatches.map((match) =>
+      match.id === matchId
+        ? {
+            ...match,
+            status,
+            updatedAt: new Date().toISOString(),
+          }
+        : match,
+    )
+
+    writeMatches(nextMatches)
+
+    return nextMatches.find((match) => match.id === matchId) ?? null
   },
 
   async listCarBrands() {
@@ -1662,6 +2058,16 @@ export const assetsService = {
   }) {
     const normalizedOwner = normalizeEmail(payload.ownerEmail)
     const currentSwipes = readSwipes()
+    const allAssets = listAssetsWithMarketplaceSeed()
+    const ownAsset = allAssets.find(
+      (asset) =>
+        asset.id === payload.ownAssetId &&
+        normalizeEmail(asset.ownerEmail) === normalizedOwner &&
+        asset.type === 'car',
+    )
+    const targetAsset = allAssets.find(
+      (asset) => asset.id === payload.targetAssetId && asset.type === 'car',
+    )
 
     const alreadyRegistered = currentSwipes.find(
       (swipe) =>
@@ -1685,7 +2091,45 @@ export const assetsService = {
     ]
     writeSwipes(nextSwipes)
 
+    if (ownAsset?.type === 'car' && targetAsset?.type === 'car') {
+      upsertMatchForSwipe({
+        compatibility: calculateCarCompatibility(ownAsset, targetAsset),
+        currentSwipes: nextSwipes,
+        decision: payload.decision,
+        ownerEmail: payload.ownerEmail,
+        ownAsset,
+        targetAsset,
+      })
+    }
+
     return nextSwipe
+  },
+
+  undoLastSwipeDecision(ownerEmail: string, ownAssetId: string) {
+    const normalizedOwner = normalizeEmail(ownerEmail)
+    const currentSwipes = readSwipes()
+    const lastSwipe = currentSwipes
+      .filter(
+        (swipe) =>
+          swipe.ownerEmail === normalizedOwner && swipe.ownAssetId === ownAssetId,
+      )
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )[0]
+
+    if (!lastSwipe) {
+      return readSwipes().filter((swipe) => swipe.ownerEmail === normalizedOwner)
+    }
+
+    const nextSwipes = currentSwipes.filter((swipe) => swipe.id !== lastSwipe.id)
+    const matchId = createMatchId(lastSwipe.ownAssetId, lastSwipe.targetAssetId)
+
+    writeSwipes(nextSwipes)
+    writeMatches(readMatches().filter((match) => match.id !== matchId))
+    writeProposals(readProposals().filter((proposal) => proposal.matchId !== matchId))
+
+    return nextSwipes.filter((swipe) => swipe.ownerEmail === normalizedOwner)
   },
 
   resetSwipeDecisions(ownerEmail: string, ownAssetId?: string) {
@@ -1703,6 +2147,33 @@ export const assetsService = {
     })
 
     writeSwipes(nextSwipes)
+
+    if (ownAssetId) {
+      const removedMatchIds = readMatches()
+        .filter(
+          (match) => match.ownAssetId === ownAssetId || match.targetAssetId === ownAssetId,
+        )
+        .map((match) => match.id)
+
+      writeMatches(
+        readMatches().filter(
+          (match) => match.ownAssetId !== ownAssetId && match.targetAssetId !== ownAssetId,
+        ),
+      )
+      writeProposals(
+        readProposals().filter((proposal) => !removedMatchIds.includes(proposal.matchId)),
+      )
+    } else {
+      writeMatches(
+        readMatches().filter(
+          (match) =>
+            match.ownerEmail !== normalizedOwner && match.targetOwnerEmail !== normalizedOwner,
+        ),
+      )
+      writeProposals(
+        readProposals().filter((proposal) => proposal.ownerEmail !== normalizedOwner),
+      )
+    }
 
     return nextSwipes.filter((swipe) => swipe.ownerEmail === normalizedOwner)
   },

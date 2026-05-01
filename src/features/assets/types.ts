@@ -84,6 +84,20 @@ export type AssetRecord = CarAsset | HouseAsset | ApartmentAsset | LandAsset
 
 export type SwipeDecision = 'like' | 'pass'
 
+export type MatchStatus = 'new' | 'negotiating' | 'declined' | 'closed'
+
+export interface AssetCompatibility {
+  distanceScore: number
+  explanations: string[]
+  locationScore: number
+  mileageScore: number
+  priceDelta: number
+  priceDeltaPercent: number
+  priceScore: number
+  score: number
+  yearScore: number
+}
+
 export interface AssetSwipeRecord {
   createdAt: string
   decision: SwipeDecision
@@ -91,6 +105,28 @@ export interface AssetSwipeRecord {
   ownerEmail: string
   ownAssetId: string
   targetAssetId: string
+}
+
+export interface AssetMatchRecord {
+  compatibility: AssetCompatibility
+  createdAt: string
+  id: string
+  ownerEmail: string
+  ownAssetId: string
+  status: MatchStatus
+  targetAssetId: string
+  targetOwnerEmail: string
+  updatedAt: string
+}
+
+export interface AssetProposalRecord {
+  cashAdjustment: number
+  createdAt: string
+  id: string
+  matchId: string
+  notes: string
+  ownerEmail: string
+  updatedAt: string
 }
 
 export interface CarAssetForm {

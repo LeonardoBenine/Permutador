@@ -6,6 +6,9 @@ import { lookupAddressByCep } from '../auth/cepService'
 import { assetsService } from './assetsService'
 import type {
   ApartmentAsset,
+  AssetCompatibility,
+  AssetMatchRecord,
+  AssetProposalRecord,
   AssetRecord,
   AssetSwipeRecord,
   AssetType,
@@ -13,6 +16,7 @@ import type {
   CarAssetForm,
   HouseAsset,
   LandAsset,
+  MatchStatus,
   PropertyAssetForm,
   SwipeDecision,
 } from './types'
@@ -37,6 +41,8 @@ const assetTypeLabels: Record<AssetType, string> = {
   house: 'Casa',
   land: 'Terreno',
 }
+
+const visibleAssetTypes: AssetType[] = ['car']
 
 interface FipeOption {
   aliases?: string[]
@@ -146,7 +152,7 @@ function parsePropertyAddress(address: string): Partial<PropertyAssetForm> {
     cityStateMatch && cityStateMatch.index !== undefined
       ? trimmed
           .slice(0, cityStateMatch.index)
-          .replace(/[,\-]\s*$/, '')
+          .replace(/[-,]\s*$/, '')
           .trim()
       : trimmed
 
@@ -435,7 +441,7 @@ function propertyValidationError(
   return null
 }
 
-type AppMenu = 'assets' | 'tinder'
+type AppMenu = 'assets' | 'discover' | 'matches'
 
 function getAssetHeadline(asset: AssetRecord): string {
   if (asset.type === 'car') {
@@ -533,16 +539,20 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const [swipeRecords, setSwipeRecords] = useState<AssetSwipeRecord[]>(() =>
     assetsService.listSwipeDecisions(user.email),
   )
+  const [matchRecords, setMatchRecords] = useState<AssetMatchRecord[]>(() =>
+    assetsService.listMatches(user.email),
+  )
+  const [proposalRecords, setProposalRecords] = useState<AssetProposalRecord[]>(() =>
+    assetsService.listProposals(user.email),
+  )
   const [selectedOwnAssetId, setSelectedOwnAssetId] = useState('')
+  const [proposalMatchId, setProposalMatchId] = useState<string | null>(null)
+  const [proposalCashAdjustment, setProposalCashAdjustment] = useState('')
+  const [proposalNotes, setProposalNotes] = useState('')
 
   const ownerFirstName = useMemo(
     () => user.name.trim().split(' ')[0] || 'Usuário',
     [user.name],
-  )
-
-  const marketplaceAssets = useMemo(
-    () => assetsService.listMarketplaceAssets(user.email),
-    [assets, user.email],
   )
 
   const selectedOwnAsset = useMemo(
@@ -552,6 +562,15 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
   const editingAsset = useMemo(
     () => assets.find((asset) => asset.id === editingAssetId) ?? null,
     [assets, editingAssetId],
+  )
+
+  const rankedMarketplaceAssets = useMemo(
+    () => assetsService.listRankedMarketplaceAssets(user.email, selectedOwnAsset),
+    [selectedOwnAsset, user.email],
+  )
+  const allVisibleAssets = useMemo(
+    () => [...assets, ...assetsService.listMarketplaceAssets(user.email)],
+    [assets, user.email],
   )
 
   const swipesForSelectedAsset = useMemo(
@@ -566,13 +585,33 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 
   const tinderQueue = useMemo(
     () =>
-      marketplaceAssets.filter((asset) => {
-        return !seenTargetIds.has(asset.id)
+      rankedMarketplaceAssets.filter((item) => {
+        return !seenTargetIds.has(item.asset.id)
       }),
-    [marketplaceAssets, seenTargetIds],
+    [rankedMarketplaceAssets, seenTargetIds],
   )
 
-  const currentCandidate = tinderQueue[0] ?? null
+  const currentCandidateItem = tinderQueue[0] ?? null
+  const currentCandidate = currentCandidateItem?.asset ?? null
+  const currentCompatibility = currentCandidateItem?.compatibility ?? null
+  const proposalMatch = useMemo(
+    () => matchRecords.find((match) => match.id === proposalMatchId) ?? null,
+    [matchRecords, proposalMatchId],
+  )
+  const proposalOwnAsset = useMemo(
+    () =>
+      proposalMatch
+        ? allVisibleAssets.find((asset) => asset.id === proposalMatch.ownAssetId) ?? null
+        : null,
+    [allVisibleAssets, proposalMatch],
+  )
+  const proposalTargetAsset = useMemo(
+    () =>
+      proposalMatch
+        ? allVisibleAssets.find((asset) => asset.id === proposalMatch.targetAssetId) ?? null
+        : null,
+    [allVisibleAssets, proposalMatch],
+  )
 
   const likesCount = swipesForSelectedAsset.filter(
     (swipe) => swipe.decision === 'like',
@@ -1755,6 +1794,8 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       await assetsService.deleteAsset(user, asset.id)
       setAssets((previous) => previous.filter((item) => item.id !== asset.id))
       setSwipeRecords(assetsService.listSwipeDecisions(user.email))
+      setMatchRecords(assetsService.listMatches(user.email))
+      setProposalRecords(assetsService.listProposals(user.email))
       setSwipeFeedback(null)
 
       if (editingAssetId === asset.id) {
@@ -1803,10 +1844,22 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       savedSwipe,
       ...previous.filter((swipe) => swipe.id !== savedSwipe.id),
     ])
+    const nextMatches = assetsService.listMatches(user.email)
+    const latestMatch = nextMatches.find(
+      (match) =>
+        (match.ownAssetId === selectedOwnAssetId &&
+          match.targetAssetId === currentCandidate.id) ||
+        (match.ownAssetId === currentCandidate.id &&
+          match.targetAssetId === selectedOwnAssetId),
+    )
+
+    setMatchRecords(nextMatches)
     setSwipeFeedback({
       text:
         decision === 'like'
-          ? 'Ativo marcado como troca interessante.'
+          ? latestMatch
+            ? 'Oportunidade criada em Matches. Você já pode abrir uma proposta.'
+            : 'Interesse enviado. A oportunidade foi salva em Matches.'
           : 'Ativo pulado. Vamos para o próximo.',
       tone: decision === 'like' ? 'success' : 'info',
     })
@@ -1822,10 +1875,73 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
       selectedOwnAssetId,
     )
     setSwipeRecords(nextOwnerSwipes)
+    setMatchRecords(assetsService.listMatches(user.email))
     setSwipeFeedback({
       text: 'Pilha reiniciada. Os ativos voltaram para avaliação.',
       tone: 'info',
     })
+  }
+
+  function handleUndoLastSwipe() {
+    if (!selectedOwnAssetId) {
+      return
+    }
+
+    const nextOwnerSwipes = assetsService.undoLastSwipeDecision(
+      user.email,
+      selectedOwnAssetId,
+    )
+    setSwipeRecords(nextOwnerSwipes)
+    setMatchRecords(assetsService.listMatches(user.email))
+    setProposalRecords(assetsService.listProposals(user.email))
+    setSwipeFeedback({
+      text: 'Última avaliação desfeita. O carro voltou para a fila.',
+      tone: 'info',
+    })
+  }
+
+  function handleMatchStatusChange(matchId: string, status: MatchStatus) {
+    assetsService.updateMatchStatus(matchId, status)
+    setMatchRecords(assetsService.listMatches(user.email))
+  }
+
+  function handleOpenProposal(match: AssetMatchRecord) {
+    const existingProposal = proposalRecords.find(
+      (proposal) => proposal.matchId === match.id,
+    )
+    const suggestedCashAdjustment = Math.max(0, match.compatibility.priceDelta)
+
+    setProposalMatchId(match.id)
+    setProposalCashAdjustment(
+      String(existingProposal?.cashAdjustment ?? Math.round(suggestedCashAdjustment)),
+    )
+    setProposalNotes(existingProposal?.notes ?? '')
+  }
+
+  function handleCloseProposal() {
+    setProposalMatchId(null)
+    setProposalCashAdjustment('')
+    setProposalNotes('')
+  }
+
+  function handleSaveProposal() {
+    if (!proposalMatch) {
+      return
+    }
+
+    const savedProposal = assetsService.saveProposal({
+      cashAdjustment: parsePositiveNumber(proposalCashAdjustment || '0'),
+      matchId: proposalMatch.id,
+      notes: proposalNotes,
+      ownerEmail: user.email,
+    })
+
+    setProposalRecords((previous) => [
+      savedProposal,
+      ...previous.filter((proposal) => proposal.id !== savedProposal.id),
+    ])
+    setMatchRecords(assetsService.listMatches(user.email))
+    handleCloseProposal()
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2226,17 +2342,28 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               }}
               type="button"
             >
-              Meus Ativos
+              Meus Carros
             </button>
             <button
-              className={activeMenu === 'tinder' ? 'active' : ''}
+              className={activeMenu === 'discover' ? 'active' : ''}
               onClick={() => {
-                setActiveMenu('tinder')
+                setActiveMenu('discover')
                 setFeedback(null)
               }}
               type="button"
             >
-              Vamos Trocar?
+              Descobrir
+            </button>
+            <button
+              className={activeMenu === 'matches' ? 'active' : ''}
+              onClick={() => {
+                setActiveMenu('matches')
+                setFeedback(null)
+                setSwipeFeedback(null)
+              }}
+              type="button"
+            >
+              Matches
             </button>
           </nav>
 
@@ -2253,8 +2380,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
               </p>
               <span>
                 {activeMenu === 'assets'
-                  ? 'Gerencie os seus ativos'
-                  : 'Escolha ativos para trocas'}
+                  ? 'Gerencie os seus carros'
+                  : activeMenu === 'discover'
+                    ? 'Descubra trocas com melhor compatibilidade'
+                    : 'Acompanhe interesses e negociações'}
                 </span>
               </div>
             </header>
@@ -2272,27 +2401,29 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                   </h1>
                 </div>
 
-                <div
-                  className="assets-type-switcher"
-                  role="tablist"
-                  aria-label="Tipos de ativos"
-                >
-                  {(Object.keys(assetTypeLabels) as AssetType[]).map((type) => (
-                    <button
-                      key={type}
-                      className={assetType === type ? 'active' : ''}
-                      onClick={() => {
-                        setAssetType(type)
-                        setFeedback(null)
-                        setEditingAssetId(null)
-                      }}
-                      role="tab"
-                      type="button"
-                    >
-                      {assetTypeLabels[type]}
-                    </button>
-                  ))}
-                </div>
+                {visibleAssetTypes.length > 1 ? (
+                  <div
+                    className="assets-type-switcher"
+                    role="tablist"
+                    aria-label="Tipos de ativos"
+                  >
+                    {visibleAssetTypes.map((type) => (
+                      <button
+                        key={type}
+                        className={assetType === type ? 'active' : ''}
+                        onClick={() => {
+                          setAssetType(type)
+                          setFeedback(null)
+                          setEditingAssetId(null)
+                        }}
+                        role="tab"
+                        type="button"
+                      >
+                        {assetTypeLabels[type]}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
 
                 {feedback ? (
                   <p className={`assets-feedback ${feedback.tone}`}>{feedback.text}</p>
@@ -2790,18 +2921,18 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                 )}
               </aside>
               </div>
-            ) : (
+            ) : activeMenu === 'discover' ? (
               <section className="tinder-layout">
                 <article className="tinder-card-shell">
                 <div className="tinder-header">
-                  <p>Tinder de ativos</p>
-                  <h2>Escolha o que você trocaria e avance no match</h2>
+                  <p>Descobrir trocas</p>
+                  <h2>Veja carros ranqueados por compatibilidade</h2>
                 </div>
 
                 {assets.length === 0 ? (
                   <div className="tinder-empty">
                     <p>
-                      Você precisa cadastrar ao menos um ativo para começar o Tinder.
+                      Você precisa cadastrar ao menos um carro para descobrir trocas.
                     </p>
                     <button
                       type="button"
@@ -2809,12 +2940,12 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         setActiveMenu('assets')
                       }}
                     >
-                      Cadastrar meu primeiro ativo
+                      Cadastrar meu primeiro carro
                     </button>
                   </div>
                 ) : (
                   <>
-                    <label htmlFor="tinder-own-asset">Ativo que você quer trocar</label>
+                    <label htmlFor="tinder-own-asset">Carro que você quer trocar</label>
                     <select
                       id="tinder-own-asset"
                       value={selectedOwnAssetId}
@@ -2843,6 +2974,10 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                         <strong>{tinderQueue.length}</strong>
                         <small>Pendentes</small>
                       </span>
+                      <span>
+                        <strong>{matchRecords.length}</strong>
+                        <small>Matches</small>
+                      </span>
                     </div>
 
                     {swipeFeedback ? (
@@ -2853,17 +2988,26 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 
                     {selectedOwnAsset && currentCandidate ? (
                       <>
-                        <div className="tinder-match-grid">
-                          <TinderAssetCard
+                        <div className="tinder-discovery-grid">
+                          <div className="tinder-own-summary">
+                            <TinderAssetCard
                             asset={selectedOwnAsset}
                             badge="Seu ativo"
                             ownerLabel={ownerFirstName}
-                          />
+                              compact
+                            />
+                          </div>
+                          <div className="tinder-candidate-panel">
                           <TinderAssetCard
                             asset={currentCandidate}
                             badge="Possível troca"
                             ownerLabel={currentCandidate.ownerName}
+                              compatibility={currentCompatibility}
                           />
+                            {currentCompatibility ? (
+                              <CompatibilityPanel compatibility={currentCompatibility} />
+                            ) : null}
+                          </div>
                         </div>
 
                         <div className="tinder-actions">
@@ -2874,7 +3018,17 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                             }}
                             type="button"
                           >
-                            Passo
+                            <span aria-hidden="true">×</span>
+                            Passar
+                          </button>
+                          <button
+                            className="tinder-undo"
+                            disabled={swipesForSelectedAsset.length === 0}
+                            onClick={handleUndoLastSwipe}
+                            type="button"
+                          >
+                            <span aria-hidden="true">↶</span>
+                            Voltar
                           </button>
                           <button
                             className="tinder-like"
@@ -2883,13 +3037,14 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                             }}
                             type="button"
                           >
-                            Troco
+                            <span aria-hidden="true">♥</span>
+                            Gostei
                           </button>
                         </div>
                       </>
                     ) : (
                       <div className="tinder-empty">
-                        <p>Você avaliou todos os ativos disponíveis para essa pilha.</p>
+                        <p>Você avaliou todos os carros disponíveis para essa pilha.</p>
                       </div>
                     )}
 
@@ -2898,16 +3053,83 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
                       onClick={handleResetSwipeStack}
                       type="button"
                     >
-                      Reiniciar avaliação desse ativo
+                      Reiniciar avaliação desse carro
                     </button>
                   </>
                 )}
+                </article>
+              </section>
+            ) : (
+              <section className="matches-layout">
+                <article className="matches-card-shell">
+                  <div className="tinder-header">
+                    <p>Matches</p>
+                    <h2>Oportunidades salvas para negociação</h2>
+                  </div>
+
+                  {matchRecords.length === 0 ? (
+                    <div className="tinder-empty">
+                      <p>
+                        Nenhum interesse salvo ainda. Curta carros em Descobrir para
+                        montar sua lista de oportunidades.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveMenu('discover')
+                        }}
+                      >
+                        Descobrir carros
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="matches-list">
+                      {matchRecords.map((match) => {
+                        const ownAsset =
+                          allVisibleAssets.find((asset) => asset.id === match.ownAssetId) ??
+                          null
+                        const targetAsset =
+                          allVisibleAssets.find((asset) => asset.id === match.targetAssetId) ??
+                          null
+
+                        return (
+                          <MatchCard
+                            key={match.id}
+                            match={match}
+                            proposal={
+                              proposalRecords.find(
+                                (proposal) => proposal.matchId === match.id,
+                              ) ?? null
+                            }
+                            ownAsset={ownAsset}
+                            targetAsset={targetAsset}
+                            onOpenProposal={handleOpenProposal}
+                            onStatusChange={handleMatchStatusChange}
+                          />
+                        )
+                      })}
+                    </div>
+                  )}
                 </article>
               </section>
             )}
           </div>
         </section>
       </main>
+
+      {proposalMatch && proposalOwnAsset && proposalTargetAsset ? (
+        <ProposalModal
+          cashAdjustment={proposalCashAdjustment}
+          match={proposalMatch}
+          notes={proposalNotes}
+          ownAsset={proposalOwnAsset}
+          targetAsset={proposalTargetAsset}
+          onCashAdjustmentChange={setProposalCashAdjustment}
+          onClose={handleCloseProposal}
+          onNotesChange={setProposalNotes}
+          onSave={handleSaveProposal}
+        />
+      ) : null}
     </div>
   )
 }
@@ -2915,17 +3137,29 @@ export function AssetsScreen({ onLogout, user }: AssetsScreenProps) {
 interface TinderAssetCardProps {
   asset: AssetRecord
   badge: string
+  compact?: boolean
+  compatibility?: AssetCompatibility | null
   ownerLabel: string
 }
 
-function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
+function TinderAssetCard({
+  asset,
+  badge,
+  compact = false,
+  compatibility = null,
+  ownerLabel,
+}: TinderAssetCardProps) {
   const coverPhoto = asset.photos[0]
 
   return (
-    <article className="tinder-asset-card">
-      <span className="tinder-badge">{badge}</span>
+    <article className={`tinder-asset-card ${compact ? 'compact' : ''}`}>
+      <div className="tinder-card-topline">
+        <span className="tinder-badge">{badge}</span>
+        {compatibility ? (
+          <span className="tinder-score">{compatibility.score}%</span>
+        ) : null}
+      </div>
       <p className="tinder-owner">{ownerLabel}</p>
-      <h3>{assetTypeLabels[asset.type]}</h3>
       <strong>{getAssetHeadline(asset)}</strong>
 
       {coverPhoto ? (
@@ -3014,6 +3248,249 @@ function TinderAssetCard({ asset, badge, ownerLabel }: TinderAssetCardProps) {
         )}
       </ul>
     </article>
+  )
+}
+
+function CompatibilityPanel({ compatibility }: { compatibility: AssetCompatibility }) {
+  return (
+    <aside className="compatibility-panel">
+      <header>
+        <span>Compatibilidade</span>
+        <strong>{compatibility.score}%</strong>
+      </header>
+      <div className="compatibility-bars">
+        <CompatibilityBar label="Valor" value={compatibility.priceScore} />
+        <CompatibilityBar label="Local" value={compatibility.locationScore} />
+        <CompatibilityBar label="Ano" value={compatibility.yearScore} />
+        <CompatibilityBar label="Km" value={compatibility.mileageScore} />
+      </div>
+      <ul>
+        {compatibility.explanations.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </aside>
+  )
+}
+
+function CompatibilityBar({ label, value }: { label: string; value: number }) {
+  const percent = Math.round(value * 100)
+
+  return (
+    <div className="compatibility-bar">
+      <span>{label}</span>
+      <div>
+        <i style={{ width: `${percent}%` }} />
+      </div>
+      <strong>{percent}%</strong>
+    </div>
+  )
+}
+
+function getMatchStatusLabel(status: MatchStatus): string {
+  const labels: Record<MatchStatus, string> = {
+    closed: 'Fechado',
+    declined: 'Recusado',
+    new: 'Novo',
+    negotiating: 'Em negociação',
+  }
+
+  return labels[status]
+}
+
+interface MatchCardProps {
+  match: AssetMatchRecord
+  onOpenProposal: (match: AssetMatchRecord) => void
+  onStatusChange: (matchId: string, status: MatchStatus) => void
+  ownAsset: AssetRecord | null
+  proposal: AssetProposalRecord | null
+  targetAsset: AssetRecord | null
+}
+
+function MatchCard({
+  match,
+  onOpenProposal,
+  onStatusChange,
+  ownAsset,
+  proposal,
+  targetAsset,
+}: MatchCardProps) {
+  return (
+    <article className="match-card">
+      <header>
+        <div>
+          <span>{getMatchStatusLabel(match.status)}</span>
+          <h3>
+            {targetAsset ? getAssetHeadline(targetAsset) : 'Carro indisponível'}
+          </h3>
+        </div>
+        <strong>{match.compatibility.score}%</strong>
+      </header>
+
+      <div className="match-card-assets">
+        {ownAsset ? (
+          <TinderAssetCard asset={ownAsset} badge="Seu carro" ownerLabel="Você" compact />
+        ) : null}
+        {targetAsset ? (
+          <TinderAssetCard
+            asset={targetAsset}
+            badge="Interesse"
+            ownerLabel={targetAsset.ownerName}
+            compact
+          />
+        ) : null}
+      </div>
+
+      <CompatibilityPanel compatibility={match.compatibility} />
+
+      {proposal ? (
+        <div className="proposal-summary">
+          <span>Proposta aberta</span>
+          <strong>Torna: {formatCurrency(proposal.cashAdjustment)}</strong>
+          {proposal.notes ? <p>{proposal.notes}</p> : null}
+        </div>
+      ) : null}
+
+      <div className="match-actions">
+        <button
+          className="primary"
+          onClick={() => {
+            onOpenProposal(match)
+          }}
+          type="button"
+        >
+          Abrir proposta
+        </button>
+        <button
+          className={match.status === 'new' ? 'active' : ''}
+          onClick={() => {
+            onStatusChange(match.id, 'new')
+          }}
+          type="button"
+        >
+          Novo
+        </button>
+        <button
+          className={match.status === 'negotiating' ? 'active' : ''}
+          onClick={() => {
+            onStatusChange(match.id, 'negotiating')
+          }}
+          type="button"
+        >
+          Negociar
+        </button>
+        <button
+          className={match.status === 'closed' ? 'active' : ''}
+          onClick={() => {
+            onStatusChange(match.id, 'closed')
+          }}
+          type="button"
+        >
+          Fechar
+        </button>
+        <button
+          className={match.status === 'declined' ? 'active danger' : 'danger'}
+          onClick={() => {
+            onStatusChange(match.id, 'declined')
+          }}
+          type="button"
+        >
+          Recusar
+        </button>
+      </div>
+    </article>
+  )
+}
+
+interface ProposalModalProps {
+  cashAdjustment: string
+  match: AssetMatchRecord
+  notes: string
+  onCashAdjustmentChange: (value: string) => void
+  onClose: () => void
+  onNotesChange: (value: string) => void
+  onSave: () => void
+  ownAsset: AssetRecord
+  targetAsset: AssetRecord
+}
+
+function ProposalModal({
+  cashAdjustment,
+  match,
+  notes,
+  onCashAdjustmentChange,
+  onClose,
+  onNotesChange,
+  onSave,
+  ownAsset,
+  targetAsset,
+}: ProposalModalProps) {
+  return (
+    <div className="proposal-modal-backdrop" role="presentation">
+      <section
+        aria-labelledby="proposal-modal-title"
+        className="proposal-modal"
+        role="dialog"
+      >
+        <header>
+          <div>
+            <span>Proposta de permuta</span>
+            <h2 id="proposal-modal-title">Abrir proposta</h2>
+          </div>
+          <button aria-label="Fechar proposta" onClick={onClose} type="button">
+            ×
+          </button>
+        </header>
+
+        <div className="proposal-assets">
+          <TinderAssetCard asset={ownAsset} badge="Seu carro" ownerLabel="Você" compact />
+          <TinderAssetCard
+            asset={targetAsset}
+            badge="Carro desejado"
+            ownerLabel={targetAsset.ownerName}
+            compact
+          />
+        </div>
+
+        <CompatibilityPanel compatibility={match.compatibility} />
+
+        <div className="proposal-form">
+          <label htmlFor="proposal-cash-adjustment">Valor de torna</label>
+          <input
+            id="proposal-cash-adjustment"
+            inputMode="numeric"
+            onChange={(event) => {
+              onCashAdjustmentChange(event.target.value.replace(/\D/g, ''))
+            }}
+            type="text"
+            value={cashAdjustment}
+          />
+          <small>
+            Diferença estimada: {formatCurrency(Math.abs(match.compatibility.priceDelta))}
+          </small>
+
+          <label htmlFor="proposal-notes">Observações da proposta</label>
+          <textarea
+            id="proposal-notes"
+            onChange={(event) => {
+              onNotesChange(event.target.value)
+            }}
+            placeholder="Ex: aceito avaliar torna, vistoria e transferência nesta semana."
+            rows={4}
+            value={notes}
+          />
+        </div>
+
+        <div className="proposal-modal-actions">
+          <button className="proposal-save" onClick={onSave} type="button">
+            Salvar proposta
+          </button>
+          <button className="proposal-cancel" onClick={onClose} type="button">
+            Cancelar
+          </button>
+        </div>
+      </section>
+    </div>
   )
 }
 
